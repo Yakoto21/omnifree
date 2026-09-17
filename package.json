@@ -1,6 +1,6 @@
 {
   "name": "meu-conversor",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Conversor local de arquivos OmniFree.",
   "main": "src/main/main.js",
   "scripts": {
