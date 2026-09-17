@@ -196,7 +196,8 @@ btnConverter.addEventListener('click', async () => {
     const options = await window.conversorAPI.obterOpcoes(file.path);
     if (!options.formats.includes(formatoSaida.value)) continue;
     progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${completed + 1} de ${arquivosSelecionados.length}: ${file.name}`;
-    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, outputName: arquivosSelecionados.length === 1 ? outputName.value : '', quality: quality.value, width: width.value, height: height.value, cropImage: cropImage.checked, watermark: watermark.value, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked }); });
+    const batchName = outputName.value ? (arquivosSelecionados.length === 1 ? outputName.value : `${outputName.value}_${completed + 1}`) : '';
+    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, outputName: batchName, quality: quality.value, width: width.value, height: height.value, cropImage: cropImage.checked, watermark: watermark.value, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked }); });
     if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name, result.caminhoArquivo); }
   }
   btnConverter.disabled = false; mostrarResultado(completed ? 'success' : 'error', completed ? `${completed} arquivo(s) convertido(s) na fila.` : 'Nenhum arquivo da fila aceita esse formato.');
