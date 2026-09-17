@@ -8,6 +8,9 @@ const formatHelp = document.getElementById('format-help');
 const formatoSaida = document.getElementById('formato-saida');
 const formatSearch = document.getElementById('format-search');
 const categoryFilter = document.getElementById('category-filter');
+const smartTip = document.getElementById('smart-tip');
+const advancedOptions = document.getElementById('advanced-options');
+const pdfTools = document.getElementById('pdf-tools');
 const btnConverter = document.getElementById('btn-converter');
 const btnTrocar = document.getElementById('btn-trocar');
 const btnPasta = document.getElementById('btn-pasta');
@@ -64,10 +67,11 @@ let queueResolve = null;
 let formatosDisponiveis = [];
 let watermarkImage = '';
 let cropPosition = 'centre';
+let opcoesAtuais = null;
 
 const translations = {
-  'pt-BR': { subtitle: 'Converta arquivos no seu computador, com privacidade.', local: '● 100% local', choose: 'Escolha um arquivo', chooseHint: 'Arraste-o para cá ou selecione-o no computador.', drop: 'Arraste um arquivo ou pasta aqui', browse: 'ou clique para procurar', folder: 'Pasta', change: 'Trocar', formatTitle: 'Defina o formato', formatHint: 'Escolha um arquivo para ver os formatos disponíveis.', convert: 'Converter arquivo', outputName: 'Nome do resultado', preset: 'Pré-ajuste', balanced: 'Equilibrado', small: 'Arquivo menor', highQuality: 'Maior qualidade', whatsapp: 'Compartilhar no WhatsApp', quality: 'Qualidade', destination: 'Destino', desktop: 'Área de Trabalho', more: 'Mais opções', width: 'Largura (imagem)', height: 'Altura (imagem)', crop: 'Recortar para preencher', cropArea: 'Área do recorte', batchSizes: 'Tamanhos extras no lote', watermark: 'Marca-d’água (imagem)', watermarkImage: 'Imagem de marca-d’água', chooseImage: 'Escolher imagem', start: 'Início de mídia', duration: 'Duração de mídia', audioOnly: 'Extrair somente áudio', noAudio: 'Remover áudio', metadata: 'Remover metadados', recent: 'Conversões recentes', viewAll: 'Ver tudo', clear: 'Limpar', historyTitle: 'Histórico completo', historyHint: 'Abra, repita ou remova uma conversão.' },
-  en: { subtitle: 'Convert files on your computer, privately.', local: '● 100% local', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', drop: 'Drag a file or folder here', browse: 'or click to browse', folder: 'Folder', change: 'Change', formatTitle: 'Choose the format', formatHint: 'Choose a file to see available formats.', convert: 'Convert file', outputName: 'Output name', preset: 'Preset', balanced: 'Balanced', small: 'Smaller file', highQuality: 'Higher quality', whatsapp: 'Share on WhatsApp', quality: 'Quality', destination: 'Destination', desktop: 'Desktop', more: 'More options', width: 'Width (image)', height: 'Height (image)', crop: 'Crop to fill', cropArea: 'Crop area', batchSizes: 'Extra batch sizes', watermark: 'Watermark (image)', watermarkImage: 'Image watermark', chooseImage: 'Choose image', start: 'Media start', duration: 'Media duration', audioOnly: 'Extract audio only', noAudio: 'Remove audio', metadata: 'Remove metadata', recent: 'Recent conversions', viewAll: 'View all', clear: 'Clear', historyTitle: 'Full history', historyHint: 'Open, repeat, or remove a conversion.' }
+  'pt-BR': { subtitle: 'Converta arquivos no seu computador, com privacidade.', local: '● 100% local', choose: 'Escolha um arquivo', chooseHint: 'Arraste-o para cá ou selecione-o no computador.', drop: 'Arraste um arquivo ou pasta aqui', browse: 'ou clique para procurar', folder: 'Pasta', change: 'Trocar', formatTitle: 'Defina o formato', formatHint: 'Escolha um arquivo para ver os formatos disponíveis.', convert: 'Converter arquivo', outputName: 'Nome do resultado', preset: 'Pré-ajuste', balanced: 'Equilibrado', small: 'Arquivo menor', highQuality: 'Maior qualidade', whatsapp: 'Compartilhar no WhatsApp', quality: 'Qualidade', destination: 'Destino', desktop: 'Área de Trabalho', more: 'Ajustes específicos do arquivo', width: 'Largura (imagem)', height: 'Altura (imagem)', crop: 'Recortar para preencher', cropArea: 'Área do recorte', batchSizes: 'Tamanhos extras no lote', watermark: 'Marca-d’água (imagem)', watermarkImage: 'Imagem de marca-d’água', chooseImage: 'Escolher imagem', start: 'Início de mídia', duration: 'Duração de mídia', audioOnly: 'Extrair somente áudio', noAudio: 'Remover áudio', metadata: 'Remover metadados', recent: 'Conversões recentes', viewAll: 'Ver tudo', clear: 'Limpar', historyTitle: 'Histórico completo', historyHint: 'Abra, repita ou remova uma conversão.', tipIdle: 'Comece escolhendo um arquivo ou uma pasta.', tipImage: 'Imagem detectada: escolha o formato e converta. Ajustes de imagem ficam logo abaixo.', tipMedia: 'Mídia detectada: escolha o formato. Em ajustes, você pode cortar, extrair ou remover o áudio.', tipPdf: 'PDF detectado: converta normalmente ou use as ferramentas exclusivas de PDF abaixo.', tipGeneric: 'Escolha o formato de saída e clique em Converter arquivo.' },
+  en: { subtitle: 'Convert files on your computer, privately.', local: '● 100% local', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', drop: 'Drag a file or folder here', browse: 'or click to browse', folder: 'Folder', change: 'Change', formatTitle: 'Choose the format', formatHint: 'Choose a file to see available formats.', convert: 'Convert file', outputName: 'Output name', preset: 'Preset', balanced: 'Balanced', small: 'Smaller file', highQuality: 'Higher quality', whatsapp: 'Share on WhatsApp', quality: 'Quality', destination: 'Destination', desktop: 'Desktop', more: 'File-specific adjustments', width: 'Width (image)', height: 'Height (image)', crop: 'Crop to fill', cropArea: 'Crop area', batchSizes: 'Extra batch sizes', watermark: 'Watermark (image)', watermarkImage: 'Image watermark', chooseImage: 'Choose image', start: 'Media start', duration: 'Media duration', audioOnly: 'Extract audio only', noAudio: 'Remove audio', metadata: 'Remove metadata', recent: 'Recent conversions', viewAll: 'View all', clear: 'Clear', historyTitle: 'Full history', historyHint: 'Open, repeat, or remove a conversion.', tipIdle: 'Start by choosing a file or folder.', tipImage: 'Image detected: choose a format and convert. Image adjustments are available below.', tipMedia: 'Media detected: choose a format. In adjustments, you can trim, extract, or remove audio.', tipPdf: 'PDF detected: convert it normally or use the PDF-specific tools below.', tipGeneric: 'Choose an output format and click Convert file.' }
 };
 function t(key) { return (translations[language.value] || translations['pt-BR'])[key] || key; }
 
@@ -93,7 +97,7 @@ if (savedTheme === 'light') document.body.classList.add('light');
 btnTheme.textContent = document.body.classList.contains('light') ? '◐' : '☼';
 btnTheme.addEventListener('click', () => { document.body.classList.toggle('light'); const theme = document.body.classList.contains('light') ? 'light' : 'dark'; localStorage.setItem('omnifree-theme', theme); btnTheme.textContent = theme === 'light' ? '◐' : '☼'; });
 language.value = localStorage.getItem('omnifree-language') || 'pt-BR';
-function applyLanguage() { const locale = language.value; document.documentElement.lang = locale; document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = t(element.dataset.i18n); }); formatSearch.placeholder = locale === 'en' ? 'Search format' : 'Pesquisar formato'; const labels = locale === 'en' ? ['All categories', 'Images', 'Audio & video', 'Documents', 'Archives', 'E-books', 'Data'] : ['Todas as categorias', 'Imagens', 'Áudio e vídeo', 'Documentos', 'Compactados', 'E-books', 'Dados']; [...categoryFilter.options].forEach((option, index) => { option.textContent = labels[index]; }); atualizarHistorico(); }
+function applyLanguage() { const locale = language.value; document.documentElement.lang = locale; document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = t(element.dataset.i18n); }); formatSearch.placeholder = locale === 'en' ? 'Search format' : 'Pesquisar formato'; const labels = locale === 'en' ? ['All categories', 'Images', 'Audio & video', 'Documents', 'Archives', 'E-books', 'Data'] : ['Todas as categorias', 'Imagens', 'Áudio e vídeo', 'Documentos', 'Compactados', 'E-books', 'Dados']; [...categoryFilter.options].forEach((option, index) => { option.textContent = labels[index]; }); atualizarHistorico(); atualizarInterfaceInteligente(opcoesAtuais); }
 applyLanguage();
 language.addEventListener('change', () => { localStorage.setItem('omnifree-language', language.value); applyLanguage(); });
 
@@ -169,17 +173,34 @@ function mostrarResultado(type, message) {
   resultMessage.textContent = message;
 }
 
+function atualizarInterfaceInteligente(opcoes) {
+  opcoesAtuais = opcoes || null;
+  const category = opcoes?.category || '';
+  const isImage = category.includes('Imagem');
+  const isMedia = category.includes('Áudio e vídeo');
+  const isPdf = opcoes?.extension === 'pdf';
+  document.querySelectorAll('.image-option').forEach((element) => { element.hidden = !isImage; });
+  document.querySelectorAll('.media-option').forEach((element) => { element.hidden = !isMedia; });
+  document.querySelectorAll('.media-or-image-option').forEach((element) => { element.hidden = !isImage && !isMedia; });
+  advancedOptions.hidden = !opcoes?.supported || (!isImage && !isMedia);
+  if (advancedOptions.hidden) advancedOptions.open = false;
+  pdfTools.hidden = !isPdf;
+  smartTip.textContent = !opcoes ? t('tipIdle') : !opcoes.supported ? (language.value === 'en' ? 'This file type is not supported yet.' : 'Esse tipo de arquivo ainda não é compatível.') : isPdf ? t('tipPdf') : isImage ? t('tipImage') : isMedia ? t('tipMedia') : t('tipGeneric');
+}
+
 function preencherFormatos(opcoes) {
   formatoSaida.innerHTML = '';
   if (!opcoes.supported) {
     formatoSaida.add(new Option('Formato não reconhecido', ''));
     formatoSaida.disabled = true; btnConverter.disabled = true;
     formatHelp.textContent = `Ainda não há conversor para .${opcoes.extension || 'este formato'}.`;
+    atualizarInterfaceInteligente(opcoes);
     return;
   }
   formatosDisponiveis = opcoes.formats; renderizarFormatos();
   formatoSaida.disabled = false; btnConverter.disabled = false;
   formatHelp.textContent = `${opcoes.category}: ${opcoes.formats.length} formatos de saída disponíveis.`;
+  atualizarInterfaceInteligente(opcoes);
 }
 function renderizarFormatos() {
   const term = formatSearch.value.trim().toLowerCase();
