@@ -58,7 +58,7 @@ function atualizarHistorico() {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
   historyList.textContent = history.length ? history.slice(0, 3).map((item) => item.name).join(' · ') : 'Nenhuma conversão recente.';
   historyItems.innerHTML = '';
-  history.slice(0, 10).forEach((item, index) => { const row = document.createElement('button'); row.className = 'history-item'; row.textContent = `Abrir: ${item.name}`; row.addEventListener('click', () => item.output && window.conversorAPI.abrirNoExplorador(item.output)); historyItems.appendChild(row); });
+  history.slice(0, 10).forEach((item, index) => { const row = document.createElement('div'); row.className = 'history-item'; const open = document.createElement('button'); open.textContent = `Abrir: ${item.name}`; open.addEventListener('click', () => item.output && window.conversorAPI.abrirNoExplorador(item.output)); const remove = document.createElement('button'); remove.textContent = '×'; remove.title = 'Remover do histórico'; remove.addEventListener('click', () => { history.splice(index, 1); localStorage.setItem('omnifree-history', JSON.stringify(history)); atualizarHistorico(); }); row.append(open, remove); historyItems.appendChild(row); });
 }
 function registrarHistorico(name, output = '') {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
