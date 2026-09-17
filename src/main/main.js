@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, dialog, clipboard } = require('elect
 const path = require('path');
 const os = require('os');
 const fs = require('fs/promises');
+const fsSync = require('fs');
 const { spawn, execFile } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
@@ -13,9 +14,10 @@ const { convertData } = require('./data-converter');
 const { uniqueOutputPath } = require('./output-paths');
 const { MultiFormatReader, BinaryBitmap, HybridBinarizer, RGBLuminanceSource } = require('@zxing/library');
 
+const ghostscriptFolders = (() => { try { return fsSync.readdirSync('C:\\Program Files\\gs', { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join('C:\\Program Files\\gs', entry.name, 'bin')); } catch { return []; } })();
 const optionalToolFolders = [
   'C:\\Program Files\\7-Zip', 'C:\\Program Files\\Calibre2', 'C:\\Program Files\\LibreOffice\\program',
-  'C:\\Program Files\\Tesseract-OCR', 'C:\\Program Files\\gs\\gs10.06.0\\bin', 'C:\\Program Files\\gs\\gs10.05.1\\bin'
+  'C:\\Program Files\\Tesseract-OCR', ...ghostscriptFolders
 ];
 process.env.PATH = `${optionalToolFolders.join(path.delimiter)}${path.delimiter}${process.env.PATH}`;
 
