@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win",
-    "build:manual": "electron-builder --win --publish never"
+    "build:manual": "npm run icon && electron-builder --win --publish never",
+    "icon": "node scripts/create-icon.js"
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
@@ -21,17 +22,20 @@
   },
   "devDependencies": {
     "electron": "^29.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "png-to-ico": "^3.0.2"
   },
   "build": {
     "appId": "com.omnifree.app",
     "productName": "OmniFree",
-    "icon": "build/omnifree-icon.png",
-    "publish": [{
-      "provider": "github",
-      "owner": "Yakoto21",
-      "repo": "omnifree"
-    }],
+    "icon": "build/omnifree-icon.ico",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Yakoto21",
+        "repo": "omnifree"
+      }
+    ],
     "win": {
       "target": "nsis",
       "signAndEditExecutable": false
