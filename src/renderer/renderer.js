@@ -76,6 +76,8 @@ const componentsHelp = document.getElementById('components-help');
 const btnComponentes = document.getElementById('btn-componentes');
 const btnVerificarAtualizacoes = document.getElementById('btn-verificar-atualizacoes');
 const updatesStatus = document.getElementById('updates-status');
+const btnBaixarAtualizacao = document.getElementById('btn-baixar-atualizacao');
+const btnInstalarAtualizacao = document.getElementById('btn-instalar-atualizacao');
 const btnJuntarPdf = document.getElementById('btn-juntar-pdf');
 const btnSepararPdf = document.getElementById('btn-separar-pdf');
 const btnExtrairPaginas = document.getElementById('btn-extrair-paginas');
@@ -193,7 +195,31 @@ atualizarComponentes();
 btnVerificarAtualizacoes.addEventListener('click', async () => {
   btnVerificarAtualizacoes.disabled = true; updatesStatus.textContent = language.value === 'en' ? 'Checking for updates…' : 'Verificando atualizações…';
   const result = await window.conversorAPI.verificarAtualizacoes();
-  updatesStatus.textContent = result.message; btnVerificarAtualizacoes.disabled = false;
+  updatesStatus.textContent = result.message;
+  btnBaixarAtualizacao.hidden = result.status !== 'available';
+  btnInstalarAtualizacao.hidden = true;
+  btnVerificarAtualizacoes.disabled = false;
+});
+btnBaixarAtualizacao.addEventListener('click', async () => {
+  btnBaixarAtualizacao.disabled = true;
+  updatesStatus.textContent = language.value === 'en' ? 'Downloading update…' : 'Baixando atualização…';
+  const result = await window.conversorAPI.baixarAtualizacao();
+  if (result.message) updatesStatus.textContent = result.message;
+  if (result.status === 'downloaded') { btnBaixarAtualizacao.hidden = true; btnInstalarAtualizacao.hidden = false; }
+  btnBaixarAtualizacao.disabled = false;
+});
+btnInstalarAtualizacao.addEventListener('click', () => {
+  btnInstalarAtualizacao.disabled = true;
+  updatesStatus.textContent = language.value === 'en' ? 'Restarting to install…' : 'Reiniciando para instalar…';
+  window.conversorAPI.instalarAtualizacao();
+});
+window.conversorAPI.receberStatusAtualizacao((status) => {
+  if (status.status === 'downloading') updatesStatus.textContent = language.value === 'en' ? `Downloading update: ${status.percent}%` : `Baixando atualização: ${status.percent}%`;
+  if (status.status === 'downloaded') {
+    updatesStatus.textContent = language.value === 'en' ? `Version ${status.version} is ready to install.` : `A versão ${status.version} está pronta para instalar.`;
+    btnBaixarAtualizacao.hidden = true; btnInstalarAtualizacao.hidden = false;
+  }
+  if (status.status === 'error') updatesStatus.textContent = `${language.value === 'en' ? 'Update error' : 'Erro na atualização'}: ${status.message}`;
 });
 btnJuntarPdf.addEventListener('click', async () => {
   try {

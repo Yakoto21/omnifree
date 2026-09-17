@@ -22,6 +22,23 @@ const optionalToolFolders = [
 process.env.PATH = `${optionalToolFolders.join(path.delimiter)}${path.delimiter}${process.env.PATH}`;
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
+let updateAvailable = false;
+let updateDownloaded = false;
+function isNewerVersion(candidate, current) {
+  const parse = (version) => String(version).replace(/^v/i, '').split('-')[0].split('.').map((part) => Number(part) || 0);
+  const candidateParts = parse(candidate); const currentParts = parse(current);
+  for (let index = 0; index < Math.max(candidateParts.length, currentParts.length); index += 1) {
+    const difference = (candidateParts[index] || 0) - (currentParts[index] || 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
+function sendUpdateStatus(payload) { mainWindow?.webContents.send('status-atualizacao', payload); }
+autoUpdater.on('download-progress', (progress) => sendUpdateStatus({ status: 'downloading', percent: Math.round(progress.percent || 0) }));
+autoUpdater.on('update-downloaded', (info) => { updateDownloaded = true; sendUpdateStatus({ status: 'downloaded', version: info.version }); });
+autoUpdater.on('error', (error) => sendUpdateStatus({ status: 'error', message: error.message }));
 const activeConversions = new Map();
 const ruleWatchers = new Map();
 let mainWindow;
@@ -132,14 +149,21 @@ function parsePages(value, count) {
 ipcMain.handle('verificar-atualizacoes', async () => {
   if (!app.isPackaged) return { status: 'development', message: 'A verificação de atualizações funciona na versão instalada do OmniFree.' };
   try {
+    updateAvailable = false; updateDownloaded = false;
     const result = await autoUpdater.checkForUpdates();
     const latest = result?.updateInfo?.version;
-    if (latest && latest !== app.getVersion()) return { status: 'available', message: `A versão ${latest} está disponível e será baixada automaticamente.` };
+    if (latest && isNewerVersion(latest, app.getVersion())) { updateAvailable = true; return { status: 'available', version: latest, message: `A versão ${latest} está disponível no GitHub.` }; }
     return { status: 'latest', message: `Você já está usando a versão mais recente (${app.getVersion()}).` };
   } catch (error) {
     return { status: 'error', message: `Não foi possível verificar atualizações: ${error.message}` };
   }
 });
+ipcMain.handle('baixar-atualizacao', async () => {
+  if (!app.isPackaged) return { status: 'development', message: 'Instale o OmniFree para atualizar pelo GitHub.' };
+  if (!updateAvailable) return { status: 'none', message: 'Nenhuma atualização disponível para baixar.' };
+  try { await autoUpdater.downloadUpdate(); return { status: updateDownloaded ? 'downloaded' : 'downloading' }; } catch (error) { return { status: 'error', message: error.message }; }
+});
+ipcMain.handle('instalar-atualizacao', () => { if (!updateDownloaded) return { status: 'none' }; autoUpdater.quitAndInstall(); return { status: 'installing' }; });
 ipcMain.handle('obter-preferencias', readPreferences);
 ipcMain.handle('salvar-preferencias', async (_event, preferences) => { await writePreferences({ autoUpdates: preferences?.autoUpdates !== false }); return readPreferences(); });
 function configureRules(rules = []) {
