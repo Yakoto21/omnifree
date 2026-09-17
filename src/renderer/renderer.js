@@ -31,6 +31,7 @@ const audioOnly = document.getElementById('audio-only');
 const noAudio = document.getElementById('no-audio');
 const removeMetadata = document.getElementById('remove-metadata');
 const componentsStatus = document.getElementById('components-status');
+const componentsHelp = document.getElementById('components-help');
 const btnComponentes = document.getElementById('btn-componentes');
 const btnJuntarPdf = document.getElementById('btn-juntar-pdf');
 const btnSepararPdf = document.getElementById('btn-separar-pdf');
@@ -78,6 +79,9 @@ async function atualizarComponentes() {
   const components = await window.conversorAPI.obterComponentes();
   const active = Object.values(components).filter(Boolean).length;
   componentsStatus.textContent = `${active}/${Object.keys(components).length} componentes prontos`;
+  const commands = { LibreOffice: 'Instale LibreOffice.', Pandoc: 'Instale Pandoc.', '7-Zip': 'Instale 7-Zip.', Calibre: 'Instale Calibre.', QPDF: 'choco install qpdf -y', Poppler: 'choco install poppler -y' };
+  const missing = Object.keys(components).filter((name) => !components[name] && commands[name]);
+  componentsHelp.textContent = missing.length ? `Faltam: ${missing.join(', ')}. ${missing.map((name) => commands[name]).join(' ')}` : 'Todos os componentes opcionais estão prontos.';
 }
 btnComponentes.addEventListener('click', atualizarComponentes);
 atualizarComponentes();
