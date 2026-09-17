@@ -1,5 +1,6 @@
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
+const folderInput = document.getElementById('folder-input');
 const fileDetails = document.getElementById('file-details');
 const fileName = document.getElementById('file-name');
 const fileMeta = document.getElementById('file-meta');
@@ -7,6 +8,7 @@ const formatHelp = document.getElementById('format-help');
 const formatoSaida = document.getElementById('formato-saida');
 const btnConverter = document.getElementById('btn-converter');
 const btnTrocar = document.getElementById('btn-trocar');
+const btnPasta = document.getElementById('btn-pasta');
 const progressContainer = document.getElementById('progress-container');
 const progressBar = document.getElementById('progress-bar');
 const progressText = document.getElementById('progress-text');
@@ -23,6 +25,7 @@ const width = document.getElementById('width');
 const height = document.getElementById('height');
 const startTime = document.getElementById('start-time');
 const duration = document.getElementById('duration');
+const outputName = document.getElementById('output-name');
 const componentsStatus = document.getElementById('components-status');
 const btnComponentes = document.getElementById('btn-componentes');
 const btnJuntarPdf = document.getElementById('btn-juntar-pdf');
@@ -152,6 +155,8 @@ dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileInput.click(); } });
 fileInput.addEventListener('change', () => escolherArquivo(fileInput.files[0], fileInput.files));
 btnTrocar.addEventListener('click', () => fileInput.click());
+btnPasta.addEventListener('click', () => folderInput.click());
+folderInput.addEventListener('change', () => escolherArquivo(folderInput.files[0], folderInput.files));
 dropZone.addEventListener('dragover', (event) => { event.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop', (event) => { event.preventDefault(); dropZone.classList.remove('dragover'); escolherArquivo(event.dataTransfer.files[0], event.dataTransfer.files); });
@@ -164,7 +169,7 @@ btnConverter.addEventListener('click', async () => {
     const options = await window.conversorAPI.obterOpcoes(file.path);
     if (!options.formats.includes(formatoSaida.value)) continue;
     progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${completed + 1} de ${arquivosSelecionados.length}: ${file.name}`;
-    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, quality: quality.value, width: width.value, height: height.value, startTime: startTime.value, duration: duration.value }); });
+    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, outputName: arquivosSelecionados.length === 1 ? outputName.value : '', quality: quality.value, width: width.value, height: height.value, startTime: startTime.value, duration: duration.value }); });
     if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name); }
   }
   btnConverter.disabled = false; mostrarResultado(completed ? 'success' : 'error', completed ? `${completed} arquivo(s) convertido(s) na fila.` : 'Nenhum arquivo da fila aceita esse formato.');
