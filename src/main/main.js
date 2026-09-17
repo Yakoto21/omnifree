@@ -55,6 +55,10 @@ ipcMain.handle('escolher-pasta-destino', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
   return result.canceled ? null : result.filePaths[0];
 });
+ipcMain.handle('escolher-imagem-marca-dagua', async () => {
+  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Imagem', extensions: ['png', 'jpg', 'jpeg', 'webp', 'avif'] }] });
+  return result.canceled ? null : result.filePaths[0];
+});
 ipcMain.handle('componentes-disponiveis', async () => ({
   LibreOffice: await commandAvailable('soffice'),
   Pandoc: await commandAvailable('pandoc'),
@@ -123,7 +127,10 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
     if (group.engine === 'sharp') {
       let image = sharp(input, { sequentialRead: true });
       if (settings.width || settings.height) image = image.resize({ width: Number(settings.width) || undefined, height: Number(settings.height) || undefined, fit: settings.cropImage ? 'cover' : 'inside', position: 'centre', withoutEnlargement: !settings.cropImage });
-      if (settings.watermark) image = image.composite([{ input: Buffer.from(`<svg width="800" height="80"><text x="20" y="55" font-size="42" fill="white" fill-opacity="0.7">${String(settings.watermark).replace(/[<&>]/g, '')}</text></svg>`), gravity: 'southeast' }]);
+      const overlays = [];
+      if (settings.watermark) overlays.push({ input: Buffer.from(`<svg width="800" height="80"><text x="20" y="55" font-size="42" fill="white" fill-opacity="0.7">${String(settings.watermark).replace(/[<&>]/g, '')}</text></svg>`), gravity: 'southeast' });
+      if (settings.watermarkImage) { await fs.access(settings.watermarkImage); overlays.push({ input: settings.watermarkImage, gravity: 'southeast', opacity: 0.72 }); }
+      if (overlays.length) image = image.composite(overlays);
       if (!settings.removeMetadata) image = image.withMetadata();
       await image.toFormat(target === 'jpg' ? 'jpeg' : target, settings.quality ? { quality: Number(settings.quality) } : {}).toFile(output);
     }

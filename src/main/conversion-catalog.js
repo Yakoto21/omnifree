@@ -23,4 +23,4 @@ function optionsFor(filePath) {
   if (!matches.length) return { supported: false, extension: extensionOf(filePath), formats: [] };
   return { supported: true, extension: extensionOf(filePath), category: matches.map((group) => group.label).join(' / '), formats: [...new Set(matches.flatMap((group) => group.outputs))] };
 }
-module.exports = { findGroup, optionsFor, extensionOf };
+module.exports = { groups, findGroup, optionsFor, extensionOf };

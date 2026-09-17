@@ -14,7 +14,7 @@
         <h1>OmniFree</h1>
         <p data-i18n="subtitle">Converta arquivos no seu computador, com privacidade.</p>
       </div>
-      <select id="language" class="theme-button" aria-label="Idioma"><option value="pt-BR">PT</option><option value="en">EN</option></select><button id="btn-theme" class="theme-button" type="button" aria-label="Alternar tema">☼</button><span class="offline-badge">● 100% local</span>
+      <select id="language" class="theme-button" aria-label="Idioma"><option value="pt-BR">PT</option><option value="en">EN</option></select><button id="btn-theme" class="theme-button" type="button" aria-label="Alternar tema">☼</button><span class="offline-badge" data-i18n="local">● 100% local</span>
     </header>
 
     <section class="converter-card" aria-label="Conversor de arquivos">
@@ -23,31 +23,32 @@
       <input id="folder-input" type="file" webkitdirectory multiple hidden>
       <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Escolher arquivo">
         <div class="drop-icon" aria-hidden="true">⇧</div>
-        <div id="drop-content"><strong id="drop-message">Arraste um arquivo aqui</strong><span>ou clique para procurar</span></div>
+        <div id="drop-content"><strong id="drop-message" data-i18n="drop">Arraste um arquivo ou pasta aqui</strong><span data-i18n="browse">ou clique para procurar</span></div>
       </div>
 
       <div id="file-details" class="file-details" hidden>
         <div class="file-symbol">⌁</div>
         <div class="file-copy"><strong id="file-name"></strong><span id="file-meta"></span></div>
-        <button id="btn-pasta" class="text-button" type="button">Pasta</button><button id="btn-trocar" class="text-button" type="button">Trocar</button>
+        <button id="btn-pasta" class="text-button" type="button" data-i18n="folder">Pasta</button><button id="btn-trocar" class="text-button" type="button" data-i18n="change">Trocar</button>
       </div>
 
-      <div class="step-heading output-heading"><span>2</span><div><h2>Defina o formato</h2><p id="format-help">Escolha um arquivo para ver os formatos disponíveis.</p></div></div>
+      <div class="step-heading output-heading"><span>2</span><div><h2 data-i18n="formatTitle">Defina o formato</h2><p id="format-help" data-i18n="formatHint">Escolha um arquivo para ver os formatos disponíveis.</p></div></div>
       <div class="output-row">
         <input id="format-search" type="search" placeholder="Pesquisar formato" aria-label="Pesquisar formato">
+        <select id="category-filter" aria-label="Filtrar categoria"><option value="">Todas as categorias</option><option value="image">Imagens</option><option value="media">Áudio e vídeo</option><option value="document">Documentos</option><option value="archive">Compactados</option><option value="ebook">E-books</option><option value="data">Dados</option></select>
         <select id="formato-saida" disabled aria-label="Formato de saída"><option value="">Selecione um arquivo primeiro</option></select>
         <button id="btn-converter" class="btn-converter" disabled type="button" data-i18n="convert">Converter arquivo</button>
       </div>
       <div class="advanced-panel">
-        <label>Nome do resultado<input id="output-name" type="text" placeholder="Automático"></label>
-        <label>Pré-ajuste<select id="preset"><option value="balanced">Equilibrado</option><option value="small">Arquivo menor</option><option value="quality">Maior qualidade</option><option value="whatsapp">Compartilhar no WhatsApp</option></select></label>
-        <label>Qualidade <output id="quality-value">80%</output><input id="quality" type="range" min="20" max="100" value="80"></label>
-        <label>Destino<button id="btn-destino" class="secondary-button" type="button">Área de Trabalho</button></label>
+        <label><span data-i18n="outputName">Nome do resultado</span><input id="output-name" type="text" placeholder="Automático"></label>
+        <label><span data-i18n="preset">Pré-ajuste</span><select id="preset"><option value="balanced" data-i18n="balanced">Equilibrado</option><option value="small" data-i18n="small">Arquivo menor</option><option value="quality" data-i18n="highQuality">Maior qualidade</option><option value="whatsapp" data-i18n="whatsapp">Compartilhar no WhatsApp</option></select></label>
+        <label><span data-i18n="quality">Qualidade</span> <output id="quality-value">80%</output><input id="quality" type="range" min="20" max="100" value="80"></label>
+        <label><span data-i18n="destination">Destino</span><button id="btn-destino" class="secondary-button" type="button" data-i18n="desktop">Área de Trabalho</button></label>
       </div>
-      <details class="more-options"><summary>Mais opções</summary><div class="advanced-grid"><label>Largura (imagem)<input id="width" type="number" min="1" placeholder="Automática"></label><label>Altura (imagem)<input id="height" type="number" min="1" placeholder="Automática"></label><label><input id="crop-image" type="checkbox"> Recortar para preencher</label><label>Marca-d’água (imagem)<input id="watermark" type="text" placeholder="Texto opcional"></label><label>Início de mídia<input id="start-time" type="text" placeholder="00:00:00"></label><label>Duração de mídia<input id="duration" type="text" placeholder="00:00:30"></label><label><input id="audio-only" type="checkbox"> Extrair somente áudio</label><label><input id="no-audio" type="checkbox"> Remover áudio</label><label><input id="remove-metadata" type="checkbox"> Remover metadados</label></div></details>
+      <details class="more-options"><summary data-i18n="more">Mais opções</summary><div class="advanced-grid"><label><span data-i18n="width">Largura (imagem)</span><input id="width" type="number" min="1" placeholder="Automática"></label><label><span data-i18n="height">Altura (imagem)</span><input id="height" type="number" min="1" placeholder="Automática"></label><label><input id="crop-image" type="checkbox"> <span data-i18n="crop">Recortar para preencher</span></label><label><span data-i18n="watermark">Marca-d’água (imagem)</span><input id="watermark" type="text" placeholder="Texto opcional"></label><label><span data-i18n="watermarkImage">Imagem de marca-d’água</span><button id="btn-watermark-image" class="secondary-button" type="button" data-i18n="chooseImage">Escolher imagem</button><small id="watermark-image-name"></small></label><label><span data-i18n="start">Início de mídia</span><input id="start-time" type="text" placeholder="00:00:00"></label><label><span data-i18n="duration">Duração de mídia</span><input id="duration" type="text" placeholder="00:00:30"></label><label><input id="audio-only" type="checkbox"> <span data-i18n="audioOnly">Extrair somente áudio</span></label><label><input id="no-audio" type="checkbox"> <span data-i18n="noAudio">Remover áudio</span></label><label><input id="remove-metadata" type="checkbox"> <span data-i18n="metadata">Remover metadados</span></label></div></details>
       <section class="components"><div><strong>Componentes do sistema</strong><span id="components-status">Verificando…</span><span id="components-help"></span></div><button id="btn-componentes" class="text-button" type="button">Atualizar</button></section>
       <section class="pdf-tools"><div><strong>Ferramentas de PDF</strong><span>Operações locais: juntar, separar, girar, proteger, otimizar e extrair imagens.</span></div><div><button id="btn-juntar-pdf" class="secondary-button" type="button">Juntar</button><button id="btn-separar-pdf" class="secondary-button" type="button">Separar</button><button id="btn-girar-pdf" class="secondary-button" type="button">Girar</button><button id="btn-proteger-pdf" class="secondary-button" type="button">Senha</button><button id="btn-otimizar-pdf" class="secondary-button" type="button">Otimizar</button><button id="btn-extrair-imagens" class="secondary-button" type="button">Extrair imagens</button></div></section>
-      <section class="history"><div><strong>Conversões recentes</strong><span id="history-list">Nenhuma conversão nesta sessão.</span></div><button id="btn-limpar-historico" class="text-button" type="button">Limpar</button></section>
+      <section class="history"><div><strong data-i18n="recent">Conversões recentes</strong><span id="history-list">Nenhuma conversão nesta sessão.</span></div><div><button id="btn-ver-historico" class="text-button" type="button" data-i18n="viewAll">Ver tudo</button><button id="btn-limpar-historico" class="text-button" type="button" data-i18n="clear">Limpar</button></div></section>
       <div id="history-items" class="history-items"></div>
 
       <div id="progress-container" class="progress-container" hidden aria-live="polite">
@@ -63,6 +64,7 @@
 
     <footer>Imagens · Áudio e vídeo · Documentos · Planilhas · E-books · Dados</footer>
   </main>
+  <dialog id="history-dialog" class="history-dialog"><div class="dialog-heading"><div><strong data-i18n="historyTitle">Histórico completo</strong><span data-i18n="historyHint">Abra, repita ou remova uma conversão.</span></div><button id="btn-fechar-historico" class="text-button" type="button" aria-label="Fechar">×</button></div><div id="history-dialog-items" class="history-dialog-items"></div></dialog>
   <script src="renderer.js"></script>
 </body>
 </html>

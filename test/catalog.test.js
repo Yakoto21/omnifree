@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { optionsFor, findGroup } = require('../src/main/conversion-catalog');
+const { groups, optionsFor, findGroup } = require('../src/main/conversion-catalog');
 
 test('identifica formatos de mídia', () => {
   assert.equal(optionsFor('filme.mp4').supported, true);
@@ -13,3 +13,11 @@ test('seleciona o motor certo para CSV', () => {
 });
 
 test('rejeita extensões desconhecidas', () => assert.equal(optionsFor('arquivo.xyz').supported, false));
+
+test('mantém uma rota de conversão para cada categoria oferecida', () => {
+  for (const group of groups) {
+    const input = `exemplo.${group.inputs[0]}`;
+    assert.equal(optionsFor(input).supported, true, group.label);
+    assert.equal(findGroup(input, group.outputs[0]).engine, group.engine, group.label);
+  }
+});

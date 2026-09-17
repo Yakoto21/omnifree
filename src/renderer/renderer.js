@@ -7,6 +7,7 @@ const fileMeta = document.getElementById('file-meta');
 const formatHelp = document.getElementById('format-help');
 const formatoSaida = document.getElementById('formato-saida');
 const formatSearch = document.getElementById('format-search');
+const categoryFilter = document.getElementById('category-filter');
 const btnConverter = document.getElementById('btn-converter');
 const btnTrocar = document.getElementById('btn-trocar');
 const btnPasta = document.getElementById('btn-pasta');
@@ -32,6 +33,8 @@ const noAudio = document.getElementById('no-audio');
 const removeMetadata = document.getElementById('remove-metadata');
 const watermark = document.getElementById('watermark');
 const cropImage = document.getElementById('crop-image');
+const btnWatermarkImage = document.getElementById('btn-watermark-image');
+const watermarkImageName = document.getElementById('watermark-image-name');
 const componentsStatus = document.getElementById('components-status');
 const componentsHelp = document.getElementById('components-help');
 const btnComponentes = document.getElementById('btn-componentes');
@@ -46,6 +49,10 @@ const btnExtrairImagens = document.getElementById('btn-extrair-imagens');
 const historyList = document.getElementById('history-list');
 const historyItems = document.getElementById('history-items');
 const btnLimparHistorico = document.getElementById('btn-limpar-historico');
+const btnVerHistorico = document.getElementById('btn-ver-historico');
+const historyDialog = document.getElementById('history-dialog');
+const historyDialogItems = document.getElementById('history-dialog-items');
+const btnFecharHistorico = document.getElementById('btn-fechar-historico');
 
 let arquivoSelecionado = null;
 let ultimoArquivoConvertido = '';
@@ -53,26 +60,37 @@ let pastaDestino = '';
 let arquivosSelecionados = [];
 let queueResolve = null;
 let formatosDisponiveis = [];
+let watermarkImage = '';
+
+const translations = {
+  'pt-BR': { subtitle: 'Converta arquivos no seu computador, com privacidade.', local: '● 100% local', choose: 'Escolha um arquivo', chooseHint: 'Arraste-o para cá ou selecione-o no computador.', drop: 'Arraste um arquivo ou pasta aqui', browse: 'ou clique para procurar', folder: 'Pasta', change: 'Trocar', formatTitle: 'Defina o formato', formatHint: 'Escolha um arquivo para ver os formatos disponíveis.', convert: 'Converter arquivo', outputName: 'Nome do resultado', preset: 'Pré-ajuste', balanced: 'Equilibrado', small: 'Arquivo menor', highQuality: 'Maior qualidade', whatsapp: 'Compartilhar no WhatsApp', quality: 'Qualidade', destination: 'Destino', desktop: 'Área de Trabalho', more: 'Mais opções', width: 'Largura (imagem)', height: 'Altura (imagem)', crop: 'Recortar para preencher', watermark: 'Marca-d’água (imagem)', watermarkImage: 'Imagem de marca-d’água', chooseImage: 'Escolher imagem', start: 'Início de mídia', duration: 'Duração de mídia', audioOnly: 'Extrair somente áudio', noAudio: 'Remover áudio', metadata: 'Remover metadados', recent: 'Conversões recentes', viewAll: 'Ver tudo', clear: 'Limpar', historyTitle: 'Histórico completo', historyHint: 'Abra, repita ou remova uma conversão.' },
+  en: { subtitle: 'Convert files on your computer, privately.', local: '● 100% local', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', drop: 'Drag a file or folder here', browse: 'or click to browse', folder: 'Folder', change: 'Change', formatTitle: 'Choose the format', formatHint: 'Choose a file to see available formats.', convert: 'Convert file', outputName: 'Output name', preset: 'Preset', balanced: 'Balanced', small: 'Smaller file', highQuality: 'Higher quality', whatsapp: 'Share on WhatsApp', quality: 'Quality', destination: 'Destination', desktop: 'Desktop', more: 'More options', width: 'Width (image)', height: 'Height (image)', crop: 'Crop to fill', watermark: 'Watermark (image)', watermarkImage: 'Image watermark', chooseImage: 'Choose image', start: 'Media start', duration: 'Media duration', audioOnly: 'Extract audio only', noAudio: 'Remove audio', metadata: 'Remove metadata', recent: 'Recent conversions', viewAll: 'View all', clear: 'Clear', historyTitle: 'Full history', historyHint: 'Open, repeat, or remove a conversion.' }
+};
+function t(key) { return (translations[language.value] || translations['pt-BR'])[key] || key; }
 
 function atualizarHistorico() {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
-  historyList.textContent = history.length ? history.slice(0, 3).map((item) => item.name).join(' · ') : 'Nenhuma conversão recente.';
+  historyList.textContent = history.length ? history.slice(0, 3).map((item) => item.name).join(' · ') : (language.value === 'en' ? 'No recent conversions.' : 'Nenhuma conversão recente.');
   historyItems.innerHTML = '';
-  history.slice(0, 10).forEach((item, index) => { const row = document.createElement('div'); row.className = 'history-item'; const open = document.createElement('button'); open.textContent = `Abrir: ${item.name}`; open.addEventListener('click', () => item.output && window.conversorAPI.abrirNoExplorador(item.output)); const remove = document.createElement('button'); remove.textContent = '×'; remove.title = 'Remover do histórico'; remove.addEventListener('click', () => { history.splice(index, 1); localStorage.setItem('omnifree-history', JSON.stringify(history)); atualizarHistorico(); }); row.append(open, remove); historyItems.appendChild(row); });
+  const addRow = (parent, item, index, full) => { const row = document.createElement('div'); row.className = 'history-item'; const open = document.createElement('button'); open.textContent = `${language.value === 'en' ? 'Open' : 'Abrir'}: ${item.name}`; open.disabled = !item.output; open.addEventListener('click', () => item.output && window.conversorAPI.abrirNoExplorador(item.output)); row.appendChild(open); if (full) { const repeat = document.createElement('button'); repeat.textContent = language.value === 'en' ? 'Repeat' : 'Repetir'; repeat.disabled = !item.input || !item.target; repeat.addEventListener('click', () => repetirConversao(item)); row.appendChild(repeat); } const remove = document.createElement('button'); remove.textContent = '×'; remove.title = language.value === 'en' ? 'Remove from history' : 'Remover do histórico'; remove.addEventListener('click', () => { history.splice(index, 1); localStorage.setItem('omnifree-history', JSON.stringify(history)); atualizarHistorico(); }); row.appendChild(remove); parent.appendChild(row); };
+  history.slice(0, 5).forEach((item, index) => addRow(historyItems, item, index, false));
+  historyDialogItems.innerHTML = ''; history.forEach((item, index) => addRow(historyDialogItems, item, index, true));
 }
-function registrarHistorico(name, output = '') {
+function registrarHistorico(name, output = '', input = '', target = '', settings = {}) {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
-  history.unshift({ name, output, date: Date.now() }); localStorage.setItem('omnifree-history', JSON.stringify(history.slice(0, 20))); atualizarHistorico();
+  history.unshift({ name, output, input, target, settings, date: Date.now() }); localStorage.setItem('omnifree-history', JSON.stringify(history.slice(0, 50))); atualizarHistorico();
 }
 btnLimparHistorico.addEventListener('click', () => { localStorage.removeItem('omnifree-history'); atualizarHistorico(); });
 atualizarHistorico();
+btnVerHistorico.addEventListener('click', () => historyDialog.showModal());
+btnFecharHistorico.addEventListener('click', () => historyDialog.close());
+historyDialog.addEventListener('click', (event) => { if (event.target === historyDialog) historyDialog.close(); });
 const savedTheme = localStorage.getItem('omnifree-theme');
 if (savedTheme === 'light') document.body.classList.add('light');
 btnTheme.textContent = document.body.classList.contains('light') ? '◐' : '☼';
 btnTheme.addEventListener('click', () => { document.body.classList.toggle('light'); const theme = document.body.classList.contains('light') ? 'light' : 'dark'; localStorage.setItem('omnifree-theme', theme); btnTheme.textContent = theme === 'light' ? '◐' : '☼'; });
 language.value = localStorage.getItem('omnifree-language') || 'pt-BR';
-const translations = { en: { subtitle: 'Convert files on your computer, privately.', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', convert: 'Convert file' } };
-function applyLanguage() { const locale = language.value; document.documentElement.lang = locale; Object.entries(translations[locale] || {}).forEach(([key, value]) => { const element = document.querySelector(`[data-i18n="${key}"]`); if (element) element.textContent = value; }); }
+function applyLanguage() { const locale = language.value; document.documentElement.lang = locale; document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = t(element.dataset.i18n); }); formatSearch.placeholder = locale === 'en' ? 'Search format' : 'Pesquisar formato'; const labels = locale === 'en' ? ['All categories', 'Images', 'Audio & video', 'Documents', 'Archives', 'E-books', 'Data'] : ['Todas as categorias', 'Imagens', 'Áudio e vídeo', 'Documentos', 'Compactados', 'E-books', 'Dados']; [...categoryFilter.options].forEach((option, index) => { option.textContent = labels[index]; }); atualizarHistorico(); }
 applyLanguage();
 language.addEventListener('change', () => { localStorage.setItem('omnifree-language', language.value); applyLanguage(); });
 
@@ -86,6 +104,7 @@ btnDestino.addEventListener('click', async () => {
   const pasta = await window.conversorAPI.escolherPastaDestino();
   if (pasta) { pastaDestino = pasta; btnDestino.textContent = 'Pasta escolhida'; }
 });
+btnWatermarkImage.addEventListener('click', async () => { const selected = await window.conversorAPI.escolherImagemMarcaDagua(); if (selected) { watermarkImage = selected; watermarkImageName.textContent = selected.split(/[\\/]/).pop(); } });
 async function atualizarComponentes() {
   const components = await window.conversorAPI.obterComponentes();
   const active = Object.values(components).filter(Boolean).length;
@@ -160,11 +179,18 @@ function preencherFormatos(opcoes) {
 }
 function renderizarFormatos() {
   const term = formatSearch.value.trim().toLowerCase();
+  const mediaFormats = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'gif', 'mp3', 'wav', 'ogg', 'flac', 'm4a', 'opus'];
+  const imageFormats = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'tiff'];
+  const documentFormats = ['pdf', 'docx', 'odt', 'rtf', 'txt', 'html', 'xlsx', 'ods', 'csv', 'tsv', 'pptx', 'odp'];
+  const archiveFormats = ['zip', '7z', 'tar', 'gz', 'bz2', 'xz'];
+  const ebookFormats = ['epub', 'mobi', 'azw3'];
+  const categoryOf = (format) => imageFormats.includes(format) ? 'image' : mediaFormats.includes(format) ? 'media' : documentFormats.includes(format) ? 'document' : archiveFormats.includes(format) ? 'archive' : ebookFormats.includes(format) ? 'ebook' : 'data';
   formatoSaida.innerHTML = '';
-  formatosDisponiveis.filter((format) => format.includes(term)).forEach((format) => formatoSaida.add(new Option(format.toUpperCase(), format)));
-  if (!formatoSaida.options.length) formatoSaida.add(new Option('Nenhum formato encontrado', ''));
+  formatosDisponiveis.filter((format) => format.includes(term) && (!categoryFilter.value || categoryOf(format) === categoryFilter.value)).forEach((format) => formatoSaida.add(new Option(format.toUpperCase(), format)));
+  if (!formatoSaida.options.length) formatoSaida.add(new Option(language.value === 'en' ? 'No format found' : 'Nenhum formato encontrado', ''));
 }
 formatSearch.addEventListener('input', renderizarFormatos);
+categoryFilter.addEventListener('change', renderizarFormatos);
 
 async function escolherArquivo(file, files = [file]) {
   if (!file) return;
@@ -186,7 +212,20 @@ btnPasta.addEventListener('click', () => folderInput.click());
 folderInput.addEventListener('change', () => escolherArquivo(folderInput.files[0], folderInput.files));
 dropZone.addEventListener('dragover', (event) => { event.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', (event) => { event.preventDefault(); dropZone.classList.remove('dragover'); escolherArquivo(event.dataTransfer.files[0], event.dataTransfer.files); });
+async function filesFromDrop(dataTransfer) {
+  const entries = [...(dataTransfer.items || [])].map((item) => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return [...dataTransfer.files];
+  const collect = async (entry) => {
+    if (entry.isFile) return new Promise((resolve) => entry.file((file) => resolve([file]), () => resolve([])));
+    if (!entry.isDirectory) return [];
+    const reader = entry.createReader(); const entriesInFolder = [];
+    const readBatch = () => new Promise((resolve) => reader.readEntries(resolve, () => resolve([])));
+    for (;;) { const batch = await readBatch(); if (!batch.length) break; entriesInFolder.push(...batch); }
+    return (await Promise.all(entriesInFolder.map(collect))).flat();
+  };
+  return (await Promise.all(entries.map(collect))).flat();
+}
+dropZone.addEventListener('drop', async (event) => { event.preventDefault(); dropZone.classList.remove('dragover'); const files = await filesFromDrop(event.dataTransfer); escolherArquivo(files[0], files); });
 
 btnConverter.addEventListener('click', async () => {
   if (!arquivoSelecionado || !formatoSaida.value) return;
@@ -197,11 +236,23 @@ btnConverter.addEventListener('click', async () => {
     if (!options.formats.includes(formatoSaida.value)) continue;
     progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${completed + 1} de ${arquivosSelecionados.length}: ${file.name}`;
     const batchName = outputName.value ? (arquivosSelecionados.length === 1 ? outputName.value : `${outputName.value}_${completed + 1}`) : '';
-    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, outputName: batchName, quality: quality.value, width: width.value, height: height.value, cropImage: cropImage.checked, watermark: watermark.value, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked }); });
-    if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name, result.caminhoArquivo); }
+    const settings = { outputDir: pastaDestino, outputName: batchName, quality: quality.value, width: width.value, height: height.value, cropImage: cropImage.checked, watermark: watermark.value, watermarkImage, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked };
+    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, settings); });
+    if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name, result.caminhoArquivo, file.path, formatoSaida.value, settings); }
   }
   btnConverter.disabled = false; mostrarResultado(completed ? 'success' : 'error', completed ? `${completed} arquivo(s) convertido(s) na fila.` : 'Nenhum arquivo da fila aceita esse formato.');
 });
+
+async function repetirConversao(item) {
+  if (!item.input || !item.target) return;
+  historyDialog.close(); btnConverter.disabled = true; progressContainer.hidden = false; resultPanel.hidden = true;
+  try {
+    const settings = { ...(item.settings || {}), outputName: '' };
+    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(item.input, item.target, settings); });
+    if (result.status === 'concluido') { ultimoArquivoConvertido = result.caminhoArquivo; btnAbrir.hidden = false; registrarHistorico(item.name, result.caminhoArquivo, item.input, item.target, settings); mostrarResultado('success', language.value === 'en' ? 'Conversion repeated successfully.' : 'Conversão repetida com sucesso.'); }
+    else mostrarResultado('error', result.mensagem);
+  } finally { btnConverter.disabled = !arquivoSelecionado; }
+}
 
 window.conversorAPI.receberProgresso((percentual) => { progressBar.style.width = `${percentual}%`; progressText.textContent = `${percentual}%`; });
 window.conversorAPI.receberStatus((dados) => {
