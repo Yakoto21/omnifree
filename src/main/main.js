@@ -122,7 +122,7 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
     send(event, { status: 'processando', mensagem: `Convertendo para ${target.toUpperCase()}...` });
     if (group.engine === 'sharp') {
       let image = sharp(input, { sequentialRead: true });
-      if (settings.width || settings.height) image = image.resize({ width: Number(settings.width) || undefined, height: Number(settings.height) || undefined, fit: 'inside', withoutEnlargement: true });
+      if (settings.width || settings.height) image = image.resize({ width: Number(settings.width) || undefined, height: Number(settings.height) || undefined, fit: settings.cropImage ? 'cover' : 'inside', position: 'centre', withoutEnlargement: !settings.cropImage });
       if (settings.watermark) image = image.composite([{ input: Buffer.from(`<svg width="800" height="80"><text x="20" y="55" font-size="42" fill="white" fill-opacity="0.7">${String(settings.watermark).replace(/[<&>]/g, '')}</text></svg>`), gravity: 'southeast' }]);
       if (!settings.removeMetadata) image = image.withMetadata();
       await image.toFormat(target === 'jpg' ? 'jpeg' : target, settings.quality ? { quality: Number(settings.quality) } : {}).toFile(output);
