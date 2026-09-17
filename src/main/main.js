@@ -26,6 +26,12 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
 let updateAvailable = false;
 let updateDownloaded = false;
+function updateErrorMessage(error) {
+  const message = String(error?.message || '');
+  if (/404|not found/i.test(message)) return 'Ainda não existe uma atualização publicada no GitHub.';
+  if (/401|403|authentication|authorization/i.test(message)) return 'O GitHub recusou a consulta de atualizações. Tente novamente mais tarde.';
+  return 'Não foi possível verificar atualizações. Confira sua conexão e tente novamente.';
+}
 function isNewerVersion(candidate, current) {
   const parse = (version) => String(version).replace(/^v/i, '').split('-')[0].split('.').map((part) => Number(part) || 0);
   const candidateParts = parse(candidate); const currentParts = parse(current);
@@ -38,7 +44,7 @@ function isNewerVersion(candidate, current) {
 function sendUpdateStatus(payload) { mainWindow?.webContents.send('status-atualizacao', payload); }
 autoUpdater.on('download-progress', (progress) => sendUpdateStatus({ status: 'downloading', percent: Math.round(progress.percent || 0) }));
 autoUpdater.on('update-downloaded', (info) => { updateDownloaded = true; sendUpdateStatus({ status: 'downloaded', version: info.version }); });
-autoUpdater.on('error', (error) => sendUpdateStatus({ status: 'error', message: error.message }));
+autoUpdater.on('error', (error) => sendUpdateStatus({ status: 'error', message: updateErrorMessage(error) }));
 const activeConversions = new Map();
 const ruleWatchers = new Map();
 let mainWindow;
@@ -155,13 +161,13 @@ ipcMain.handle('verificar-atualizacoes', async () => {
     if (latest && isNewerVersion(latest, app.getVersion())) { updateAvailable = true; return { status: 'available', version: latest, message: `A versão ${latest} está disponível no GitHub.` }; }
     return { status: 'latest', message: `Você já está usando a versão mais recente (${app.getVersion()}).` };
   } catch (error) {
-    return { status: 'error', message: `Não foi possível verificar atualizações: ${error.message}` };
+    return { status: 'error', message: updateErrorMessage(error) };
   }
 });
 ipcMain.handle('baixar-atualizacao', async () => {
   if (!app.isPackaged) return { status: 'development', message: 'Instale o OmniFree para atualizar pelo GitHub.' };
   if (!updateAvailable) return { status: 'none', message: 'Nenhuma atualização disponível para baixar.' };
-  try { await autoUpdater.downloadUpdate(); return { status: updateDownloaded ? 'downloaded' : 'downloading' }; } catch (error) { return { status: 'error', message: error.message }; }
+  try { await autoUpdater.downloadUpdate(); return { status: updateDownloaded ? 'downloaded' : 'downloading' }; } catch (error) { return { status: 'error', message: updateErrorMessage(error) }; }
 });
 ipcMain.handle('instalar-atualizacao', () => { if (!updateDownloaded) return { status: 'none' }; autoUpdater.quitAndInstall(); return { status: 'installing' }; });
 ipcMain.handle('obter-preferencias', readPreferences);
