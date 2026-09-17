@@ -41,6 +41,7 @@ const btnProtegerPdf = document.getElementById('btn-proteger-pdf');
 const btnOtimizarPdf = document.getElementById('btn-otimizar-pdf');
 const btnExtrairImagens = document.getElementById('btn-extrair-imagens');
 const historyList = document.getElementById('history-list');
+const historyItems = document.getElementById('history-items');
 const btnLimparHistorico = document.getElementById('btn-limpar-historico');
 
 let arquivoSelecionado = null;
@@ -53,10 +54,12 @@ let formatosDisponiveis = [];
 function atualizarHistorico() {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
   historyList.textContent = history.length ? history.slice(0, 3).map((item) => item.name).join(' · ') : 'Nenhuma conversão recente.';
+  historyItems.innerHTML = '';
+  history.slice(0, 10).forEach((item, index) => { const row = document.createElement('button'); row.className = 'history-item'; row.textContent = `Abrir: ${item.name}`; row.addEventListener('click', () => item.output && window.conversorAPI.abrirNoExplorador(item.output)); historyItems.appendChild(row); });
 }
-function registrarHistorico(name) {
+function registrarHistorico(name, output = '') {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
-  history.unshift({ name, date: Date.now() }); localStorage.setItem('omnifree-history', JSON.stringify(history.slice(0, 20))); atualizarHistorico();
+  history.unshift({ name, output, date: Date.now() }); localStorage.setItem('omnifree-history', JSON.stringify(history.slice(0, 20))); atualizarHistorico();
 }
 btnLimparHistorico.addEventListener('click', () => { localStorage.removeItem('omnifree-history'); atualizarHistorico(); });
 atualizarHistorico();
@@ -186,7 +189,7 @@ btnConverter.addEventListener('click', async () => {
     if (!options.formats.includes(formatoSaida.value)) continue;
     progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${completed + 1} de ${arquivosSelecionados.length}: ${file.name}`;
     const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, outputName: arquivosSelecionados.length === 1 ? outputName.value : '', quality: quality.value, width: width.value, height: height.value, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked }); });
-    if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name); }
+    if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name, result.caminhoArquivo); }
   }
   btnConverter.disabled = false; mostrarResultado(completed ? 'success' : 'error', completed ? `${completed} arquivo(s) convertido(s) na fila.` : 'Nenhum arquivo da fila aceita esse formato.');
 });
