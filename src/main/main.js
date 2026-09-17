@@ -13,6 +13,10 @@ const { convertData } = require('./data-converter');
 const { uniqueOutputPath } = require('./output-paths');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
+const activeConversions = new Map();
+const preferencesFile = () => path.join(app.getPath('userData'), 'omnifree-preferences.json');
+async function readPreferences() { try { return JSON.parse(await fs.readFile(preferencesFile(), 'utf8')); } catch { return { autoUpdates: true }; } }
+async function writePreferences(preferences) { await fs.writeFile(preferencesFile(), JSON.stringify(preferences), 'utf8'); }
 
 function createWindow() {
   const win = new BrowserWindow({ width: 1200, height: 800, minWidth: 900, minHeight: 600, backgroundColor: '#0a0e1a', webPreferences: { preload: path.join(__dirname, '../preload/preload.js'), nodeIntegration: false, contextIsolation: true } });
@@ -81,6 +85,8 @@ ipcMain.handle('verificar-atualizacoes', async () => {
     return { status: 'error', message: `Não foi possível verificar atualizações: ${error.message}` };
   }
 });
+ipcMain.handle('obter-preferencias', readPreferences);
+ipcMain.handle('salvar-preferencias', async (_event, preferences) => { await writePreferences({ autoUpdates: preferences?.autoUpdates !== false }); return readPreferences(); });
 ipcMain.handle('mesclar-pdfs', async () => {
   const selected = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], filters: [{ name: 'PDF', extensions: ['pdf'] }] });
   if (selected.canceled || selected.filePaths.length < 2) return { canceled: true };
@@ -127,15 +133,19 @@ ipcMain.handle('extrair-imagens-pdf', async (_event, input, outputDir) => {
   const targetDir = await pdfTargetDir(outputDir); const folder = path.join(targetDir, `OmniFree_imagens_${Date.now()}`); await fs.mkdir(folder);
   await run('pdfimages', ['-all', input, path.join(folder, 'imagem')]); return folder;
 });
-ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
+ipcMain.on('processar-arquivo', async (event, input, target, settings = {}, jobId = '') => {
+  const job = { cancelled: false, cancel: null };
+  if (jobId) activeConversions.set(jobId, job);
+  let output = '';
   const group = findGroup(input, target); const source = extensionOf(input);
   if (!group || !group.outputs.includes(target)) return send(event, { status: 'erro', mensagem: 'Esta combinação de arquivo e formato não é compatível.' });
   try {
     await fs.access(input);
     const outputDir = settings.outputDir && await fs.stat(settings.outputDir).then((stat) => stat.isDirectory()).catch(() => false) ? settings.outputDir : path.join(os.homedir(), 'Desktop');
     const requestedName = String(settings.outputName || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim();
-    const output = await uniqueOutputPath(outputDir, requestedName || `OmniFree_${Date.now()}`, target);
+    output = await uniqueOutputPath(outputDir, requestedName || `OmniFree_${Date.now()}`, target);
     send(event, { status: 'processando', mensagem: `Convertendo para ${target.toUpperCase()}...` });
+    if (job.cancelled) throw new Error('CONVERSAO_CANCELADA');
     if (group.engine === 'sharp') {
       let image = sharp(input, { sequentialRead: true });
       if (settings.width || settings.height) image = image.resize({ width: Number(settings.width) || undefined, height: Number(settings.height) || undefined, fit: settings.cropImage ? 'cover' : 'inside', position: settings.cropPosition || 'centre', withoutEnlargement: !settings.cropImage });
@@ -149,29 +159,36 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
     else if (group.engine === 'data') await convertData(input, output, source, target);
     else if (group.engine === 'ffmpeg') await new Promise((resolve, reject) => {
       const job = ffmpeg(input).toFormat(target);
+      activeConversions.get(jobId).cancel = () => job.kill('SIGKILL');
       if (settings.startTime) job.setStartTime(settings.startTime);
       if (settings.duration) job.setDuration(settings.duration);
       if (settings.audioOnly) job.noVideo();
       if (settings.noAudio) job.noAudio();
       if (settings.removeMetadata) job.outputOptions(['-map_metadata', '-1']);
       if (settings.quality) job.outputOptions(['-crf', String(Math.max(0, Math.min(51, 51 - Number(settings.quality) / 2)))]);
-      job.on('progress', (p) => p.percent && event.sender.send('progresso-conversao', Math.round(p.percent))).on('end', resolve).on('error', reject).save(output);
+      job.on('progress', (p) => p.percent && event.sender.send('progresso-conversao', Math.round(p.percent))).on('end', resolve).on('error', (error) => activeConversions.get(jobId)?.cancelled ? reject(new Error('CONVERSAO_CANCELADA')) : reject(error)).save(output);
     });
     else if (group.engine === 'libreoffice') await convertWithLibreOffice(input, output, target);
     else if (group.engine === '7zip') await convertWith7zip(input, output);
     else if (group.engine === 'calibre') await run('ebook-convert', [input, output]);
-    send(event, { status: 'concluido', mensagem: 'Sucesso! Arquivo convertido.', caminhoArquivo: output });
+    if (activeConversions.get(jobId)?.cancelled) throw new Error('CONVERSAO_CANCELADA');
+    send(event, { status: 'concluido', mensagem: 'Sucesso! Arquivo convertido.', caminhoArquivo: output, jobId });
   } catch (error) {
     console.error(error);
+    if (error.message === 'CONVERSAO_CANCELADA') { await fs.rm(output || '', { force: true }).catch(() => {}); send(event, { status: 'cancelado', mensagem: 'Conversão cancelada.', jobId }); return; }
     const missing = error.message.includes('não foi encontrado');
-    send(event, { status: 'erro', mensagem: missing ? `${error.message} Instale o componente correspondente e tente novamente.` : `Não foi possível converter este arquivo: ${error.message}` });
+    send(event, { status: 'erro', mensagem: missing ? `${error.message} Instale o componente correspondente e tente novamente.` : `Não foi possível converter este arquivo: ${error.message}`, jobId });
+  } finally {
+    if (jobId) activeConversions.delete(jobId);
   }
 });
+ipcMain.on('cancelar-conversao', (_event, jobId) => { const job = activeConversions.get(jobId); if (job) { job.cancelled = true; job.cancel?.(); } });
 
 ipcMain.on('abrir-no-explorador', (_event, filePath) => { if (filePath) shell.showItemInFolder(filePath); });
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createWindow();
-  if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch((error) => console.warn('Não foi possível verificar atualizações:', error.message));
+  const preferences = await readPreferences();
+  if (app.isPackaged && preferences.autoUpdates !== false) autoUpdater.checkForUpdatesAndNotify().catch((error) => console.warn('Não foi possível verificar atualizações:', error.message));
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

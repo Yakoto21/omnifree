@@ -4,6 +4,11 @@ const folderInput = document.getElementById('folder-input');
 const fileDetails = document.getElementById('file-details');
 const fileName = document.getElementById('file-name');
 const fileMeta = document.getElementById('file-meta');
+const previewPanel = document.getElementById('preview-panel');
+const previewKind = document.getElementById('preview-kind');
+const previewContent = document.getElementById('preview-content');
+const queuePanel = document.getElementById('queue-panel');
+const queueItems = document.getElementById('queue-items');
 const formatHelp = document.getElementById('format-help');
 const formatoSaida = document.getElementById('formato-saida');
 const formatSearch = document.getElementById('format-search');
@@ -18,11 +23,19 @@ const progressContainer = document.getElementById('progress-container');
 const progressBar = document.getElementById('progress-bar');
 const progressText = document.getElementById('progress-text');
 const progressState = document.getElementById('progress-state');
+const btnCancelar = document.getElementById('btn-cancelar');
 const resultPanel = document.getElementById('result-panel');
 const resultIcon = document.getElementById('result-icon');
 const resultMessage = document.getElementById('result-message');
 const btnAbrir = document.getElementById('btn-abrir');
 const preset = document.getElementById('preset');
+const btnSalvarPerfil = document.getElementById('btn-salvar-perfil');
+const btnConfiguracoes = document.getElementById('btn-configuracoes');
+const settingsDialog = document.getElementById('settings-dialog');
+const btnFecharConfiguracoes = document.getElementById('btn-fechar-configuracoes');
+const btnSalvarConfiguracoes = document.getElementById('btn-salvar-configuracoes');
+const btnDestinoPadrao = document.getElementById('btn-destino-padrao');
+const autoUpdates = document.getElementById('auto-updates');
 const quality = document.getElementById('quality');
 const qualityValue = document.getElementById('quality-value');
 const btnDestino = document.getElementById('btn-destino');
@@ -70,6 +83,10 @@ let formatosDisponiveis = [];
 let watermarkImage = '';
 let cropPosition = 'centre';
 let opcoesAtuais = null;
+let pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || '';
+let previewUrl = '';
+let activeJobId = '';
+let cancelRequested = false;
 
 const translations = {
   'pt-BR': { subtitle: 'Converta arquivos no seu computador, com privacidade.', local: '● 100% local', choose: 'Escolha um arquivo', chooseHint: 'Arraste-o para cá ou selecione-o no computador.', drop: 'Arraste um arquivo ou pasta aqui', browse: 'ou clique para procurar', folder: 'Pasta', change: 'Trocar', formatTitle: 'Defina o formato', formatHint: 'Escolha um arquivo para ver os formatos disponíveis.', convert: 'Converter arquivo', outputName: 'Nome do resultado', preset: 'Pré-ajuste', balanced: 'Equilibrado', small: 'Arquivo menor', highQuality: 'Maior qualidade', whatsapp: 'Compartilhar no WhatsApp', quality: 'Qualidade', destination: 'Destino', desktop: 'Área de Trabalho', more: 'Ajustes específicos do arquivo', width: 'Largura (imagem)', height: 'Altura (imagem)', crop: 'Recortar para preencher', cropArea: 'Área do recorte', batchSizes: 'Tamanhos extras no lote', watermark: 'Marca-d’água (imagem)', watermarkImage: 'Imagem de marca-d’água', chooseImage: 'Escolher imagem', start: 'Início de mídia', duration: 'Duração de mídia', audioOnly: 'Extrair somente áudio', noAudio: 'Remover áudio', metadata: 'Remover metadados', recent: 'Conversões recentes', viewAll: 'Ver tudo', clear: 'Limpar', updates: 'Atualizações', updatesHint: 'Verifique se há uma versão nova do OmniFree.', checkUpdates: 'Verificar agora', historyTitle: 'Histórico completo', historyHint: 'Abra, repita ou remova uma conversão.', tipIdle: 'Comece escolhendo um arquivo ou uma pasta.', tipImage: 'Imagem detectada: escolha o formato e converta. Ajustes de imagem ficam logo abaixo.', tipMedia: 'Mídia detectada: escolha o formato. Em ajustes, você pode cortar, extrair ou remover o áudio.', tipPdf: 'PDF detectado: converta normalmente ou use as ferramentas exclusivas de PDF abaixo.', tipGeneric: 'Escolha o formato de saída e clique em Converter arquivo.' },
@@ -106,13 +123,21 @@ language.addEventListener('change', () => { localStorage.setItem('omnifree-langu
 function atualizarQualidade() { qualityValue.textContent = `${quality.value}%`; }
 quality.addEventListener('input', atualizarQualidade);
 preset.addEventListener('change', () => {
-  const values = { balanced: 80, small: 55, quality: 95, whatsapp: 65 };
-  quality.value = values[preset.value]; atualizarQualidade();
+  const profiles = { balanced: { quality: 80 }, small: { quality: 55 }, quality: { quality: 95 }, whatsapp: { quality: 65, width: 1280, height: 720, target: 'mp4' }, instagram: { quality: 85, width: 1080, height: 1350, target: 'jpg' }, youtube: { quality: 95, width: 1920, height: 1080, target: 'mp4' }, print: { quality: 100, width: 3000, target: 'png' } };
+  const selected = profiles[preset.value] || JSON.parse(localStorage.getItem(`omnifree-profile-${preset.value}`) || '{}');
+  if (selected.quality) quality.value = selected.quality; if (selected.width) width.value = selected.width; if (selected.height) height.value = selected.height;
+  if (selected.target && [...formatoSaida.options].some((option) => option.value === selected.target)) formatoSaida.value = selected.target;
+  atualizarQualidade();
 });
+btnSalvarPerfil.addEventListener('click', () => { const name = window.prompt('Nome para salvar este perfil:'); if (!name) return; const id = `saved-${Date.now()}`; localStorage.setItem(`omnifree-profile-${id}`, JSON.stringify({ quality: quality.value, width: width.value, height: height.value, target: formatoSaida.value })); const option = new Option(name.trim(), id); preset.add(option); preset.value = id; });
 btnDestino.addEventListener('click', async () => {
   const pasta = await window.conversorAPI.escolherPastaDestino();
   if (pasta) { pastaDestino = pasta; btnDestino.textContent = 'Pasta escolhida'; }
 });
+btnConfiguracoes.addEventListener('click', async () => { pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || ''; btnDestinoPadrao.textContent = pastaDestinoPadrao ? 'Pasta escolhida' : 'Área de Trabalho'; const preferences = await window.conversorAPI.obterPreferencias(); autoUpdates.checked = preferences.autoUpdates !== false; settingsDialog.showModal(); });
+btnFecharConfiguracoes.addEventListener('click', () => settingsDialog.close());
+btnDestinoPadrao.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (folder) { pastaDestinoPadrao = folder; btnDestinoPadrao.textContent = 'Pasta escolhida'; } });
+btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); settingsDialog.close(); });
 btnWatermarkImage.addEventListener('click', async () => { const selected = await window.conversorAPI.escolherImagemMarcaDagua(); if (selected) { watermarkImage = selected; watermarkImageName.textContent = selected.split(/[\\/]/).pop(); } });
 cropGrid.addEventListener('click', (event) => { const button = event.target.closest('button[data-position]'); if (!button) return; cropPosition = button.dataset.position; cropGrid.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); });
 async function atualizarComponentes() {
@@ -173,6 +198,28 @@ function formatarTamanho(bytes) {
   return `${value.toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
+function renderizarPrevia(file) {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewContent.innerHTML = ''; previewPanel.hidden = true;
+  if (!file) return;
+  const extension = (file.name.split('.').pop() || '').toLowerCase();
+  const image = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'bmp'].includes(extension);
+  const video = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v'].includes(extension);
+  const audio = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'opus'].includes(extension);
+  const pdf = extension === 'pdf';
+  if (!image && !video && !audio && !pdf) return;
+  previewUrl = URL.createObjectURL(file); previewPanel.hidden = false;
+  previewKind.textContent = image ? 'Imagem' : video ? 'Vídeo' : audio ? 'Áudio' : 'PDF';
+  const media = document.createElement(image ? 'img' : video ? 'video' : audio ? 'audio' : 'embed');
+  media.src = previewUrl; if (video || audio) media.controls = true; if (video) media.muted = true; if (pdf) media.type = 'application/pdf';
+  previewContent.appendChild(media);
+}
+
+function renderizarFila() {
+  queueItems.innerHTML = ''; queuePanel.hidden = arquivosSelecionados.length < 2;
+  arquivosSelecionados.forEach((file, index) => { const row = document.createElement('div'); row.className = `queue-item ${file.queueStatus || ''}`; const text = document.createElement('span'); text.textContent = `${index + 1}. ${file.name}${file.queueError ? ` — ${file.queueError}` : ''}`; const up = document.createElement('button'); up.textContent = '↑'; up.disabled = index === 0; up.addEventListener('click', () => { [arquivosSelecionados[index - 1], arquivosSelecionados[index]] = [arquivosSelecionados[index], arquivosSelecionados[index - 1]]; renderizarFila(); }); const down = document.createElement('button'); down.textContent = '↓'; down.disabled = index === arquivosSelecionados.length - 1; down.addEventListener('click', () => { [arquivosSelecionados[index + 1], arquivosSelecionados[index]] = [arquivosSelecionados[index], arquivosSelecionados[index + 1]]; renderizarFila(); }); const remove = document.createElement('button'); remove.textContent = '×'; remove.addEventListener('click', () => { arquivosSelecionados.splice(index, 1); if (arquivoSelecionado === file) escolherArquivo(arquivosSelecionados[0], arquivosSelecionados); else renderizarFila(); }); row.append(text, up, down, remove); queueItems.appendChild(row); });
+}
+
 function mostrarResultado(type, message) {
   resultPanel.hidden = false;
   resultPanel.className = `result-panel ${type}`;
@@ -231,6 +278,7 @@ async function escolherArquivo(file, files = [file]) {
   fileName.textContent = file.name;
   fileMeta.textContent = `${formatarTamanho(file.size)}${arquivosSelecionados.length > 1 ? ` · +${arquivosSelecionados.length - 1} na fila` : ''}`;
   fileDetails.hidden = false;
+  renderizarPrevia(file); renderizarFila();
   const opcoes = await window.conversorAPI.obterOpcoes(file.path);
   preencherFormatos(opcoes);
   if (!opcoes.supported) mostrarResultado('error', `O tipo .${opcoes.extension || 'desconhecido'} ainda não é compatível.`);
@@ -261,7 +309,7 @@ dropZone.addEventListener('drop', async (event) => { event.preventDefault(); dro
 
 btnConverter.addEventListener('click', async () => {
   if (!arquivoSelecionado || !formatoSaida.value) return;
-  btnConverter.disabled = true; progressContainer.hidden = false; resultPanel.hidden = true; btnAbrir.hidden = true;
+  btnConverter.disabled = true; progressContainer.hidden = false; resultPanel.hidden = true; btnAbrir.hidden = true; cancelRequested = false; btnCancelar.hidden = false; btnCancelar.disabled = false;
   const sizeVariants = batchSizes.value.split(',').map((value) => value.trim().match(/^(\d{1,5})\s*[xX]\s*(\d{1,5})$/)).filter(Boolean).map((match) => ({ width: match[1], height: match[2], label: `${match[1]}x${match[2]}` }));
   const jobs = [];
   for (const file of arquivosSelecionados) {
@@ -271,23 +319,32 @@ btnConverter.addEventListener('click', async () => {
   }
   let completed = 0;
   for (const [jobIndex, job] of jobs.entries()) {
+    if (cancelRequested) break;
     const { file, size } = job;
+    file.queueStatus = 'processing'; file.queueError = ''; renderizarFila();
     progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${jobIndex + 1} de ${jobs.length}: ${file.name}`;
     const suffix = [jobs.length > 1 ? jobIndex + 1 : '', size.label].filter(Boolean).join('_');
     const batchName = outputName.value ? `${outputName.value}${suffix ? `_${suffix}` : ''}` : '';
-    const settings = { outputDir: pastaDestino, outputName: batchName, quality: quality.value, width: size.width, height: size.height, cropImage: cropImage.checked, cropPosition, watermark: watermark.value, watermarkImage, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked };
-    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, settings); });
-    if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name, result.caminhoArquivo, file.path, formatoSaida.value, settings); }
+    const settings = { outputDir: pastaDestino || pastaDestinoPadrao, outputName: batchName, quality: quality.value, width: size.width, height: size.height, cropImage: cropImage.checked, cropPosition, watermark: watermark.value, watermarkImage, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked };
+    activeJobId = crypto.randomUUID();
+    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, settings, activeJobId); });
+    activeJobId = '';
+    if (result.status === 'concluido') { completed += 1; file.queueStatus = 'done'; registrarHistorico(file.name, result.caminhoArquivo, file.path, formatoSaida.value, settings); }
+    else if (result.status === 'cancelado') { cancelRequested = true; file.queueStatus = 'cancelled'; }
+    else { file.queueStatus = 'error'; file.queueError = result.mensagem || 'Erro desconhecido'; }
+    renderizarFila();
   }
-  btnConverter.disabled = false; mostrarResultado(completed ? 'success' : 'error', completed ? `${completed} arquivo(s) convertido(s) na fila.` : 'Nenhum arquivo da fila aceita esse formato.');
+  btnConverter.disabled = false; btnCancelar.hidden = true; mostrarResultado(cancelRequested ? 'error' : completed ? 'success' : 'error', cancelRequested ? `Conversão cancelada. ${completed} arquivo(s) concluído(s).` : completed ? `${completed} arquivo(s) convertido(s) na fila.` : 'Nenhum arquivo da fila aceita esse formato.');
 });
+btnCancelar.addEventListener('click', () => { cancelRequested = true; btnCancelar.disabled = true; progressState.textContent = 'Cancelando conversão…'; if (activeJobId) window.conversorAPI.cancelarConversao(activeJobId); });
 
 async function repetirConversao(item) {
   if (!item.input || !item.target) return;
   historyDialog.close(); btnConverter.disabled = true; progressContainer.hidden = false; resultPanel.hidden = true;
   try {
     const settings = { ...(item.settings || {}), outputName: '' };
-    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(item.input, item.target, settings); });
+    activeJobId = crypto.randomUUID();
+    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(item.input, item.target, settings, activeJobId); }); activeJobId = '';
     if (result.status === 'concluido') { ultimoArquivoConvertido = result.caminhoArquivo; btnAbrir.hidden = false; registrarHistorico(item.name, result.caminhoArquivo, item.input, item.target, settings); mostrarResultado('success', language.value === 'en' ? 'Conversion repeated successfully.' : 'Conversão repetida com sucesso.'); }
     else mostrarResultado('error', result.mensagem);
   } finally { btnConverter.disabled = !arquivoSelecionado; }

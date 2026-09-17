@@ -1,12 +1,15 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('conversorAPI', {
-  enviarArquivo: (caminho, formato, configuracoes) => ipcRenderer.send('processar-arquivo', caminho, formato, configuracoes),
+  enviarArquivo: (caminho, formato, configuracoes, jobId) => ipcRenderer.send('processar-arquivo', caminho, formato, configuracoes, jobId),
+  cancelarConversao: (jobId) => ipcRenderer.send('cancelar-conversao', jobId),
   obterOpcoes: (caminho) => ipcRenderer.invoke('opcoes-conversao', caminho),
   escolherPastaDestino: () => ipcRenderer.invoke('escolher-pasta-destino'),
   escolherImagemMarcaDagua: () => ipcRenderer.invoke('escolher-imagem-marca-dagua'),
   obterComponentes: () => ipcRenderer.invoke('componentes-disponiveis'),
   verificarAtualizacoes: () => ipcRenderer.invoke('verificar-atualizacoes'),
+  obterPreferencias: () => ipcRenderer.invoke('obter-preferencias'),
+  salvarPreferencias: (preferencias) => ipcRenderer.invoke('salvar-preferencias', preferencias),
   mesclarPdfs: () => ipcRenderer.invoke('mesclar-pdfs'),
   separarPdf: (caminho, pasta) => ipcRenderer.invoke('separar-pdf', caminho, pasta),
   girarPdf: (caminho, pasta) => ipcRenderer.invoke('girar-pdf', caminho, pasta),

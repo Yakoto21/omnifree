@@ -14,7 +14,7 @@
         <h1>OmniFree</h1>
         <p data-i18n="subtitle">Converta arquivos no seu computador, com privacidade.</p>
       </div>
-      <select id="language" class="theme-button" aria-label="Idioma"><option value="pt-BR">PT</option><option value="en">EN</option></select><button id="btn-theme" class="theme-button" type="button" aria-label="Alternar tema">☼</button><span class="offline-badge" data-i18n="local">● 100% local</span>
+      <select id="language" class="theme-button" aria-label="Idioma"><option value="pt-BR">PT</option><option value="en">EN</option></select><button id="btn-theme" class="theme-button" type="button" aria-label="Alternar tema">☼</button><button id="btn-configuracoes" class="theme-button" type="button" aria-label="Configurações">⚙</button><span class="offline-badge" data-i18n="local">● 100% local</span>
     </header>
 
     <section class="converter-card" aria-label="Conversor de arquivos">
@@ -31,6 +31,8 @@
         <div class="file-copy"><strong id="file-name"></strong><span id="file-meta"></span></div>
         <button id="btn-pasta" class="text-button" type="button" data-i18n="folder">Pasta</button><button id="btn-trocar" class="text-button" type="button" data-i18n="change">Trocar</button>
       </div>
+      <section id="preview-panel" class="preview-panel" hidden><div><strong>Pré-visualização</strong><span id="preview-kind"></span></div><div id="preview-content" class="preview-content"></div></section>
+      <section id="queue-panel" class="queue-panel" hidden><div><strong>Fila de conversão</strong><span>Use as setas para alterar a ordem.</span></div><div id="queue-items"></div></section>
 
       <div class="step-heading output-heading"><span>2</span><div><h2 data-i18n="formatTitle">Defina o formato</h2><p id="format-help" data-i18n="formatHint">Escolha um arquivo para ver os formatos disponíveis.</p></div></div>
       <div class="output-row">
@@ -42,7 +44,7 @@
       <div id="smart-tip" class="smart-tip" aria-live="polite">Escolha um arquivo para continuar.</div>
       <div class="advanced-panel">
         <label><span data-i18n="outputName">Nome do resultado</span><input id="output-name" type="text" placeholder="Automático"></label>
-        <label><span data-i18n="preset">Pré-ajuste</span><select id="preset"><option value="balanced" data-i18n="balanced">Equilibrado</option><option value="small" data-i18n="small">Arquivo menor</option><option value="quality" data-i18n="highQuality">Maior qualidade</option><option value="whatsapp" data-i18n="whatsapp">Compartilhar no WhatsApp</option></select></label>
+        <label><span data-i18n="preset">Perfil</span><select id="preset"><option value="balanced" data-i18n="balanced">Equilibrado</option><option value="small" data-i18n="small">Arquivo menor</option><option value="quality" data-i18n="highQuality">Maior qualidade</option><option value="whatsapp" data-i18n="whatsapp">WhatsApp</option><option value="instagram">Instagram</option><option value="youtube">YouTube</option><option value="print">Impressão</option></select><button id="btn-salvar-perfil" class="text-button" type="button">Salvar atual</button></label>
         <label><span data-i18n="quality">Qualidade</span> <output id="quality-value">80%</output><input id="quality" type="range" min="20" max="100" value="80"></label>
         <label><span data-i18n="destination">Destino</span><button id="btn-destino" class="secondary-button" type="button" data-i18n="desktop">Área de Trabalho</button></label>
       </div>
@@ -54,7 +56,7 @@
       <div id="history-items" class="history-items"></div>
 
       <div id="progress-container" class="progress-container" hidden aria-live="polite">
-        <div class="progress-label"><span id="progress-state">Preparando conversão</span><strong id="progress-text">0%</strong></div>
+        <div class="progress-label"><span id="progress-state">Preparando conversão</span><strong id="progress-text">0%</strong><button id="btn-cancelar" class="cancel-button" type="button">Cancelar</button></div>
         <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
       </div>
 
@@ -67,6 +69,7 @@
     <footer>Imagens · Áudio e vídeo · Documentos · Planilhas · E-books · Dados</footer>
   </main>
   <dialog id="history-dialog" class="history-dialog"><div class="dialog-heading"><div><strong data-i18n="historyTitle">Histórico completo</strong><span data-i18n="historyHint">Abra, repita ou remova uma conversão.</span></div><button id="btn-fechar-historico" class="text-button" type="button" aria-label="Fechar">×</button></div><div id="history-dialog-items" class="history-dialog-items"></div></dialog>
+  <dialog id="settings-dialog" class="history-dialog"><div class="dialog-heading"><div><strong>Configurações</strong><span>Preferências salvas neste computador.</span></div><button id="btn-fechar-configuracoes" class="text-button" type="button">×</button></div><div class="settings-content"><label>Destino padrão<button id="btn-destino-padrao" class="secondary-button" type="button">Área de Trabalho</button></label><label><input id="auto-updates" type="checkbox" checked> Verificar atualizações automaticamente ao abrir</label><button id="btn-salvar-configuracoes" class="btn-converter" type="button">Salvar configurações</button></div></dialog>
   <script src="renderer.js"></script>
 </body>
 </html>
