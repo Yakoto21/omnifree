@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniFree — Conversor local</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div class="brand-mark" aria-hidden="true">∞</div>
+      <div>
+        <h1>OmniFree</h1>
+        <p>Converta arquivos no seu computador, com privacidade.</p>
+      </div>
+      <button id="btn-theme" class="theme-button" type="button" aria-label="Alternar tema">☼</button><span class="offline-badge">● 100% local</span>
+    </header>
+
+    <section class="converter-card" aria-label="Conversor de arquivos">
+      <div class="step-heading"><span>1</span><div><h2>Escolha um arquivo</h2><p>Arraste-o para cá ou selecione-o no computador.</p></div></div>
+      <input id="file-input" type="file" multiple hidden>
+      <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Escolher arquivo">
+        <div class="drop-icon" aria-hidden="true">⇧</div>
+        <div id="drop-content"><strong id="drop-message">Arraste um arquivo aqui</strong><span>ou clique para procurar</span></div>
+      </div>
+
+      <div id="file-details" class="file-details" hidden>
+        <div class="file-symbol">⌁</div>
+        <div class="file-copy"><strong id="file-name"></strong><span id="file-meta"></span></div>
+        <button id="btn-trocar" class="text-button" type="button">Trocar</button>
+      </div>
+
+      <div class="step-heading output-heading"><span>2</span><div><h2>Defina o formato</h2><p id="format-help">Escolha um arquivo para ver os formatos disponíveis.</p></div></div>
+      <div class="output-row">
+        <select id="formato-saida" disabled aria-label="Formato de saída"><option value="">Selecione um arquivo primeiro</option></select>
+        <button id="btn-converter" class="btn-converter" disabled type="button">Converter arquivo</button>
+      </div>
+      <div class="advanced-panel">
+        <label>Pré-ajuste<select id="preset"><option value="balanced">Equilibrado</option><option value="small">Arquivo menor</option><option value="quality">Maior qualidade</option><option value="whatsapp">Compartilhar no WhatsApp</option></select></label>
+        <label>Qualidade <output id="quality-value">80%</output><input id="quality" type="range" min="20" max="100" value="80"></label>
+        <label>Destino<button id="btn-destino" class="secondary-button" type="button">Área de Trabalho</button></label>
+      </div>
+      <details class="more-options"><summary>Mais opções</summary><div class="advanced-grid"><label>Largura (imagem)<input id="width" type="number" min="1" placeholder="Automática"></label><label>Altura (imagem)<input id="height" type="number" min="1" placeholder="Automática"></label><label>Início de mídia<input id="start-time" type="text" placeholder="00:00:00"></label><label>Duração de mídia<input id="duration" type="text" placeholder="00:00:30"></label></div></details>
+      <section class="components"><div><strong>Componentes do sistema</strong><span id="components-status">Verificando…</span></div><button id="btn-componentes" class="text-button" type="button">Atualizar</button></section>
+      <section class="pdf-tools"><div><strong>Ferramentas de PDF</strong><span>Operações locais: juntar, separar, girar, proteger, otimizar e extrair imagens.</span></div><div><button id="btn-juntar-pdf" class="secondary-button" type="button">Juntar</button><button id="btn-separar-pdf" class="secondary-button" type="button">Separar</button><button id="btn-girar-pdf" class="secondary-button" type="button">Girar</button><button id="btn-proteger-pdf" class="secondary-button" type="button">Senha</button><button id="btn-otimizar-pdf" class="secondary-button" type="button">Otimizar</button><button id="btn-extrair-imagens" class="secondary-button" type="button">Extrair imagens</button></div></section>
+      <section class="history"><div><strong>Conversões recentes</strong><span id="history-list">Nenhuma conversão nesta sessão.</span></div><button id="btn-limpar-historico" class="text-button" type="button">Limpar</button></section>
+
+      <div id="progress-container" class="progress-container" hidden aria-live="polite">
+        <div class="progress-label"><span id="progress-state">Preparando conversão</span><strong id="progress-text">0%</strong></div>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+      </div>
+
+      <div id="result-panel" class="result-panel" hidden aria-live="polite">
+        <span id="result-icon" aria-hidden="true"></span><span id="result-message"></span>
+        <button id="btn-abrir" class="btn-abrir" type="button" hidden>Abrir na pasta</button>
+      </div>
+    </section>
+
+    <footer>Imagens · Áudio e vídeo · Documentos · Planilhas · E-books · Dados</footer>
+  </main>
+  <script src="renderer.js"></script>
+</body>
+</html>
