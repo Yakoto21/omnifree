@@ -12,13 +12,13 @@
       <div class="brand-mark" aria-hidden="true">∞</div>
       <div>
         <h1>OmniFree</h1>
-        <p>Converta arquivos no seu computador, com privacidade.</p>
+        <p data-i18n="subtitle">Converta arquivos no seu computador, com privacidade.</p>
       </div>
       <select id="language" class="theme-button" aria-label="Idioma"><option value="pt-BR">PT</option><option value="en">EN</option></select><button id="btn-theme" class="theme-button" type="button" aria-label="Alternar tema">☼</button><span class="offline-badge">● 100% local</span>
     </header>
 
     <section class="converter-card" aria-label="Conversor de arquivos">
-      <div class="step-heading"><span>1</span><div><h2>Escolha um arquivo</h2><p>Arraste-o para cá ou selecione-o no computador.</p></div></div>
+      <div class="step-heading"><span>1</span><div><h2 data-i18n="choose">Escolha um arquivo</h2><p data-i18n="chooseHint">Arraste-o para cá ou selecione-o no computador.</p></div></div>
       <input id="file-input" type="file" multiple hidden>
       <input id="folder-input" type="file" webkitdirectory multiple hidden>
       <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Escolher arquivo">
@@ -36,7 +36,7 @@
       <div class="output-row">
         <input id="format-search" type="search" placeholder="Pesquisar formato" aria-label="Pesquisar formato">
         <select id="formato-saida" disabled aria-label="Formato de saída"><option value="">Selecione um arquivo primeiro</option></select>
-        <button id="btn-converter" class="btn-converter" disabled type="button">Converter arquivo</button>
+        <button id="btn-converter" class="btn-converter" disabled type="button" data-i18n="convert">Converter arquivo</button>
       </div>
       <div class="advanced-panel">
         <label>Nome do resultado<input id="output-name" type="text" placeholder="Automático"></label>

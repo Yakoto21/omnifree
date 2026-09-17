@@ -70,7 +70,10 @@ if (savedTheme === 'light') document.body.classList.add('light');
 btnTheme.textContent = document.body.classList.contains('light') ? '◐' : '☼';
 btnTheme.addEventListener('click', () => { document.body.classList.toggle('light'); const theme = document.body.classList.contains('light') ? 'light' : 'dark'; localStorage.setItem('omnifree-theme', theme); btnTheme.textContent = theme === 'light' ? '◐' : '☼'; });
 language.value = localStorage.getItem('omnifree-language') || 'pt-BR';
-language.addEventListener('change', () => { localStorage.setItem('omnifree-language', language.value); document.documentElement.lang = language.value; location.reload(); });
+const translations = { en: { subtitle: 'Convert files on your computer, privately.', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', convert: 'Convert file' } };
+function applyLanguage() { const locale = language.value; document.documentElement.lang = locale; Object.entries(translations[locale] || {}).forEach(([key, value]) => { const element = document.querySelector(`[data-i18n="${key}"]`); if (element) element.textContent = value; }); }
+applyLanguage();
+language.addEventListener('change', () => { localStorage.setItem('omnifree-language', language.value); applyLanguage(); });
 
 function atualizarQualidade() { qualityValue.textContent = `${quality.value}%`; }
 quality.addEventListener('input', atualizarQualidade);
