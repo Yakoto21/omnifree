@@ -6,6 +6,7 @@ const fileName = document.getElementById('file-name');
 const fileMeta = document.getElementById('file-meta');
 const formatHelp = document.getElementById('format-help');
 const formatoSaida = document.getElementById('formato-saida');
+const formatSearch = document.getElementById('format-search');
 const btnConverter = document.getElementById('btn-converter');
 const btnTrocar = document.getElementById('btn-trocar');
 const btnPasta = document.getElementById('btn-pasta');
@@ -46,6 +47,7 @@ let ultimoArquivoConvertido = '';
 let pastaDestino = '';
 let arquivosSelecionados = [];
 let queueResolve = null;
+let formatosDisponiveis = [];
 
 function atualizarHistorico() {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
@@ -137,10 +139,17 @@ function preencherFormatos(opcoes) {
     formatHelp.textContent = `Ainda não há conversor para .${opcoes.extension || 'este formato'}.`;
     return;
   }
-  opcoes.formats.forEach((formato) => formatoSaida.add(new Option(formato.toUpperCase(), formato)));
+  formatosDisponiveis = opcoes.formats; renderizarFormatos();
   formatoSaida.disabled = false; btnConverter.disabled = false;
   formatHelp.textContent = `${opcoes.category}: ${opcoes.formats.length} formatos de saída disponíveis.`;
 }
+function renderizarFormatos() {
+  const term = formatSearch.value.trim().toLowerCase();
+  formatoSaida.innerHTML = '';
+  formatosDisponiveis.filter((format) => format.includes(term)).forEach((format) => formatoSaida.add(new Option(format.toUpperCase(), format)));
+  if (!formatoSaida.options.length) formatoSaida.add(new Option('Nenhum formato encontrado', ''));
+}
+formatSearch.addEventListener('input', renderizarFormatos);
 
 async function escolherArquivo(file, files = [file]) {
   if (!file) return;
