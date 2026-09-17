@@ -121,8 +121,9 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
     const output = path.join(outputDir, `${requestedName ? requestedName.replace(/\.[^.]+$/, '') : `OmniFree_${Date.now()}`}.${target}`);
     send(event, { status: 'processando', mensagem: `Convertendo para ${target.toUpperCase()}...` });
     if (group.engine === 'sharp') {
-      let image = sharp(input);
+      let image = sharp(input, { sequentialRead: true });
       if (settings.width || settings.height) image = image.resize({ width: Number(settings.width) || undefined, height: Number(settings.height) || undefined, fit: 'inside', withoutEnlargement: true });
+      if (!settings.removeMetadata) image = image.withMetadata();
       await image.toFormat(target === 'jpg' ? 'jpeg' : target, settings.quality ? { quality: Number(settings.quality) } : {}).toFile(output);
     }
     else if (group.engine === 'data') await convertData(input, output, source, target);
@@ -132,6 +133,7 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
       if (settings.duration) job.setDuration(settings.duration);
       if (settings.audioOnly) job.noVideo();
       if (settings.noAudio) job.noAudio();
+      if (settings.removeMetadata) job.outputOptions(['-map_metadata', '-1']);
       if (settings.quality) job.outputOptions(['-crf', String(Math.max(0, Math.min(51, 51 - Number(settings.quality) / 2)))]);
       job.on('progress', (p) => p.percent && event.sender.send('progresso-conversao', Math.round(p.percent))).on('end', resolve).on('error', reject).save(output);
     });

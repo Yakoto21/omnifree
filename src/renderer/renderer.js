@@ -26,6 +26,9 @@ const height = document.getElementById('height');
 const startTime = document.getElementById('start-time');
 const duration = document.getElementById('duration');
 const outputName = document.getElementById('output-name');
+const audioOnly = document.getElementById('audio-only');
+const noAudio = document.getElementById('no-audio');
+const removeMetadata = document.getElementById('remove-metadata');
 const componentsStatus = document.getElementById('components-status');
 const btnComponentes = document.getElementById('btn-componentes');
 const btnJuntarPdf = document.getElementById('btn-juntar-pdf');
@@ -169,7 +172,7 @@ btnConverter.addEventListener('click', async () => {
     const options = await window.conversorAPI.obterOpcoes(file.path);
     if (!options.formats.includes(formatoSaida.value)) continue;
     progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${completed + 1} de ${arquivosSelecionados.length}: ${file.name}`;
-    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, outputName: arquivosSelecionados.length === 1 ? outputName.value : '', quality: quality.value, width: width.value, height: height.value, startTime: startTime.value, duration: duration.value }); });
+    const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, { outputDir: pastaDestino, outputName: arquivosSelecionados.length === 1 ? outputName.value : '', quality: quality.value, width: width.value, height: height.value, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked }); });
     if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name); }
   }
   btnConverter.disabled = false; mostrarResultado(completed ? 'success' : 'error', completed ? `${completed} arquivo(s) convertido(s) na fila.` : 'Nenhum arquivo da fila aceita esse formato.');
