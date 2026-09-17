@@ -10,6 +10,7 @@ const { autoUpdater } = require('electron-updater');
 const { PDFDocument, degrees } = require('pdf-lib');
 const { findGroup, optionsFor, extensionOf } = require('./conversion-catalog');
 const { convertData } = require('./data-converter');
+const { uniqueOutputPath } = require('./output-paths');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
@@ -133,7 +134,7 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
     await fs.access(input);
     const outputDir = settings.outputDir && await fs.stat(settings.outputDir).then((stat) => stat.isDirectory()).catch(() => false) ? settings.outputDir : path.join(os.homedir(), 'Desktop');
     const requestedName = String(settings.outputName || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim();
-    const output = path.join(outputDir, `${requestedName ? requestedName.replace(/\.[^.]+$/, '') : `OmniFree_${Date.now()}`}.${target}`);
+    const output = await uniqueOutputPath(outputDir, requestedName || `OmniFree_${Date.now()}`, target);
     send(event, { status: 'processando', mensagem: `Convertendo para ${target.toUpperCase()}...` });
     if (group.engine === 'sharp') {
       let image = sharp(input, { sequentialRead: true });
