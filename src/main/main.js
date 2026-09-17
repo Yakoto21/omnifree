@@ -13,6 +13,12 @@ const { convertData } = require('./data-converter');
 const { uniqueOutputPath } = require('./output-paths');
 const { MultiFormatReader, BinaryBitmap, HybridBinarizer, RGBLuminanceSource } = require('@zxing/library');
 
+const optionalToolFolders = [
+  'C:\\Program Files\\7-Zip', 'C:\\Program Files\\Calibre2', 'C:\\Program Files\\LibreOffice\\program',
+  'C:\\Program Files\\Tesseract-OCR', 'C:\\Program Files\\gs\\gs10.06.0\\bin', 'C:\\Program Files\\gs\\gs10.05.1\\bin'
+];
+process.env.PATH = `${optionalToolFolders.join(path.delimiter)}${path.delimiter}${process.env.PATH}`;
+
 ffmpeg.setFfmpegPath(ffmpegStatic);
 const activeConversions = new Map();
 const ruleWatchers = new Map();
