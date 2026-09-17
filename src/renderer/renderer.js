@@ -37,6 +37,11 @@ const settingsDialog = document.getElementById('settings-dialog');
 const btnFecharConfiguracoes = document.getElementById('btn-fechar-configuracoes');
 const btnSalvarConfiguracoes = document.getElementById('btn-salvar-configuracoes');
 const btnThumbnail = document.getElementById('btn-thumbnail');
+const btnExportarRelatorio = document.getElementById('btn-exportar-relatorio');
+const privacyMode = document.getElementById('privacy-mode');
+const reportDialog = document.getElementById('report-dialog');
+const btnExportCsv = document.getElementById('btn-export-csv');
+const btnExportJson = document.getElementById('btn-export-json');
 const btnDestinoPadrao = document.getElementById('btn-destino-padrao');
 const autoUpdates = document.getElementById('auto-updates');
 const settingsTheme = document.getElementById('settings-theme');
@@ -129,8 +134,18 @@ function registrarHistorico(name, output = '', input = '', target = '', settings
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
   history.unshift({ name, output, input, target, settings, date: Date.now() }); localStorage.setItem('omnifree-history', JSON.stringify(history.slice(0, 50))); atualizarHistorico();
 }
+function exportarRelatorio(type) {
+  const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
+  const content = type === 'json' ? JSON.stringify(history, null, 2) : ['arquivo,resultado,data', ...history.map((item) => `"${String(item.name).replace(/"/g, '""')}","${String(item.output).replace(/"/g, '""')}","${new Date(item.date).toISOString()}"`)].join('\n');
+  const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([content], { type: type === 'json' ? 'application/json' : 'text/csv' })); link.download = `OmniFree_relatorio.${type}`; link.click(); URL.revokeObjectURL(link.href); reportDialog.close();
+}
 btnLimparHistorico.addEventListener('click', () => { localStorage.removeItem('omnifree-history'); atualizarHistorico(); });
 atualizarHistorico();
+privacyMode.checked = localStorage.getItem('omnifree-privacy-mode') === 'true';
+privacyMode.addEventListener('change', () => localStorage.setItem('omnifree-privacy-mode', privacyMode.checked));
+btnExportarRelatorio.addEventListener('click', () => reportDialog.showModal());
+btnExportCsv.addEventListener('click', () => exportarRelatorio('csv'));
+btnExportJson.addEventListener('click', () => exportarRelatorio('json'));
 btnVerHistorico.addEventListener('click', () => historyDialog.showModal());
 btnFecharHistorico.addEventListener('click', () => historyDialog.close());
 historyDialog.addEventListener('click', (event) => { if (event.target === historyDialog) historyDialog.close(); });
