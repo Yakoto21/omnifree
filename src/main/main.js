@@ -6,6 +6,7 @@ const { spawn, execFile } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const sharp = require('sharp');
+const { autoUpdater } = require('electron-updater');
 const { PDFDocument, degrees } = require('pdf-lib');
 const { findGroup, optionsFor, extensionOf } = require('./conversion-catalog');
 const { convertData } = require('./data-converter');
@@ -145,5 +146,9 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
 });
 
 ipcMain.on('abrir-no-explorador', (_event, filePath) => { if (filePath) shell.showItemInFolder(filePath); });
-app.whenReady().then(() => { createWindow(); app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); }); });
+app.whenReady().then(() => {
+  createWindow();
+  if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch((error) => console.warn('Não foi possível verificar atualizações:', error.message));
+  app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
