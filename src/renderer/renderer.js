@@ -38,6 +38,8 @@ const btnDestinoPadrao = document.getElementById('btn-destino-padrao');
 const autoUpdates = document.getElementById('auto-updates');
 const settingsTheme = document.getElementById('settings-theme');
 const settingsLanguage = document.getElementById('settings-language');
+const btnAdicionarRegra = document.getElementById('btn-adicionar-regra');
+const rulesStatus = document.getElementById('rules-status');
 const quality = document.getElementById('quality');
 const qualityValue = document.getElementById('quality-value');
 const btnDestino = document.getElementById('btn-destino');
@@ -71,6 +73,10 @@ const btnOtimizarPdf = document.getElementById('btn-otimizar-pdf');
 const btnExtrairImagens = document.getElementById('btn-extrair-imagens');
 const btnWebPdf = document.getElementById('btn-web-pdf');
 const btnLegendas = document.getElementById('btn-legendas');
+const btnOcr = document.getElementById('btn-ocr');
+const btnLerCodigo = document.getElementById('btn-ler-codigo');
+const comparisonPanel = document.getElementById('comparison-panel');
+const comparisonContent = document.getElementById('comparison-content');
 const historyList = document.getElementById('history-list');
 const historyItems = document.getElementById('history-items');
 const btnLimparHistorico = document.getElementById('btn-limpar-historico');
@@ -89,9 +95,11 @@ let watermarkImage = '';
 let cropPosition = 'centre';
 let opcoesAtuais = null;
 let pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || '';
+let regrasAutomaticas = [];
 let previewUrl = '';
 let activeJobId = '';
 let cancelRequested = false;
+let detalhesEntrada = null;
 
 const translations = {
   'pt-BR': { subtitle: 'Converta arquivos no seu computador, com privacidade.', local: '● 100% local', choose: 'Escolha um arquivo', chooseHint: 'Arraste-o para cá ou selecione-o no computador.', drop: 'Arraste um arquivo ou pasta aqui', browse: 'ou clique para procurar', folder: 'Pasta', change: 'Trocar', formatTitle: 'Defina o formato', formatHint: 'Escolha um arquivo para ver os formatos disponíveis.', convert: 'Converter arquivo', outputName: 'Nome do resultado', preset: 'Pré-ajuste', balanced: 'Equilibrado', small: 'Arquivo menor', highQuality: 'Maior qualidade', whatsapp: 'Compartilhar no WhatsApp', quality: 'Qualidade', destination: 'Destino', desktop: 'Área de Trabalho', more: 'Ajustes específicos do arquivo', width: 'Largura (imagem)', height: 'Altura (imagem)', crop: 'Recortar para preencher', cropArea: 'Área do recorte', batchSizes: 'Tamanhos extras no lote', watermark: 'Marca-d’água (imagem)', watermarkImage: 'Imagem de marca-d’água', chooseImage: 'Escolher imagem', start: 'Início de mídia', duration: 'Duração de mídia', audioOnly: 'Extrair somente áudio', noAudio: 'Remover áudio', metadata: 'Remover metadados', recent: 'Conversões recentes', viewAll: 'Ver tudo', clear: 'Limpar', updates: 'Atualizações', updatesHint: 'Verifique se há uma versão nova do OmniFree.', checkUpdates: 'Verificar agora', historyTitle: 'Histórico completo', historyHint: 'Abra, repita ou remova uma conversão.', tipIdle: 'Comece escolhendo um arquivo ou uma pasta.', tipImage: 'Imagem detectada: escolha o formato e converta. Ajustes de imagem ficam logo abaixo.', tipMedia: 'Mídia detectada: escolha o formato. Em ajustes, você pode cortar, extrair ou remover o áudio.', tipPdf: 'PDF detectado: converta normalmente ou use as ferramentas exclusivas de PDF abaixo.', tipGeneric: 'Escolha o formato de saída e clique em Converter arquivo.' },
@@ -139,10 +147,12 @@ btnDestino.addEventListener('click', async () => {
   const pasta = await window.conversorAPI.escolherPastaDestino();
   if (pasta) { pastaDestino = pasta; btnDestino.textContent = 'Pasta escolhida'; }
 });
-btnConfiguracoes.addEventListener('click', async () => { pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || ''; btnDestinoPadrao.textContent = pastaDestinoPadrao ? 'Pasta escolhida' : 'Área de Trabalho'; settingsTheme.value = document.body.classList.contains('light') ? 'light' : 'dark'; settingsLanguage.value = language.value; const preferences = await window.conversorAPI.obterPreferencias(); autoUpdates.checked = preferences.autoUpdates !== false; settingsDialog.showModal(); });
+btnConfiguracoes.addEventListener('click', async () => { pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || ''; btnDestinoPadrao.textContent = pastaDestinoPadrao ? 'Pasta escolhida' : 'Área de Trabalho'; settingsTheme.value = document.body.classList.contains('light') ? 'light' : 'dark'; settingsLanguage.value = language.value; const preferences = await window.conversorAPI.obterPreferencias(); autoUpdates.checked = preferences.autoUpdates !== false; regrasAutomaticas = await window.conversorAPI.obterRegras(); rulesStatus.textContent = regrasAutomaticas.length ? `${regrasAutomaticas.length} regra(s) ativa(s)` : 'Nenhuma regra automática'; settingsDialog.showModal(); });
+btnAdicionarRegra.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (!folder) return; const outputDir = await window.conversorAPI.escolherPastaDestino(); if (!outputDir || outputDir === folder) return window.alert('Escolha uma pasta de saída diferente.'); const target = window.prompt('Formato automático: mp3, pdf ou webp', 'webp'); if (!['mp3', 'pdf', 'webp'].includes((target || '').toLowerCase())) return; regrasAutomaticas.push({ folder, outputDir, target: target.toLowerCase() }); rulesStatus.textContent = `${regrasAutomaticas.length} regra(s) ativa(s)`; });
 btnFecharConfiguracoes.addEventListener('click', () => settingsDialog.close());
 btnDestinoPadrao.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (folder) { pastaDestinoPadrao = folder; btnDestinoPadrao.textContent = 'Pasta escolhida'; } });
-btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); document.body.classList.toggle('light', settingsTheme.value === 'light'); localStorage.setItem('omnifree-theme', settingsTheme.value); btnTheme.textContent = settingsTheme.value === 'light' ? '◐' : '☼'; language.value = settingsLanguage.value; localStorage.setItem('omnifree-language', language.value); applyLanguage(); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); settingsDialog.close(); });
+btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); document.body.classList.toggle('light', settingsTheme.value === 'light'); localStorage.setItem('omnifree-theme', settingsTheme.value); btnTheme.textContent = settingsTheme.value === 'light' ? '◐' : '☼'; language.value = settingsLanguage.value; localStorage.setItem('omnifree-language', language.value); applyLanguage(); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); await window.conversorAPI.salvarRegras(regrasAutomaticas); settingsDialog.close(); });
+window.conversorAPI.receberArquivoRegra(async (rule) => { const options = await window.conversorAPI.obterOpcoes(rule.input); if (!options.formats.includes(rule.target)) return; const id = crypto.randomUUID(); window.conversorAPI.enviarArquivo(rule.input, rule.target, { outputDir: rule.outputDir }, id); });
 btnWatermarkImage.addEventListener('click', async () => { const selected = await window.conversorAPI.escolherImagemMarcaDagua(); if (selected) { watermarkImage = selected; watermarkImageName.textContent = selected.split(/[\\/]/).pop(); } });
 cropGrid.addEventListener('click', (event) => { const button = event.target.closest('button[data-position]'); if (!button) return; cropPosition = button.dataset.position; cropGrid.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); });
 async function atualizarComponentes() {
@@ -198,6 +208,8 @@ btnExtrairImagens.addEventListener('click', async () => {
 });
 btnWebPdf.addEventListener('click', async () => { try { const url = window.prompt('Cole o endereço da página (https://…):'); if (!url) return; ultimoArquivoConvertido = await window.conversorAPI.paginaWebParaPdf(url, pastaDestino || pastaDestinoPadrao); btnAbrir.hidden = false; mostrarResultado('success', 'Página salva como PDF.'); } catch (error) { mostrarResultado('error', error.message); } });
 btnLegendas.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); const format = window.prompt('Formato da legenda: srt, vtt ou ass', 'srt'); if (!format) return; ultimoArquivoConvertido = await window.conversorAPI.extrairLegendas(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, ['srt', 'vtt', 'ass'].includes(format.toLowerCase()) ? format.toLowerCase() : 'srt'); btnAbrir.hidden = false; mostrarResultado('success', 'Legenda extraída com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
+btnOcr.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione uma imagem ou PDF primeiro.'); const result = await window.conversorAPI.ocrArquivo(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, 'por+eng'); ultimoArquivoConvertido = result.output; btnAbrir.hidden = false; mostrarResultado('success', `Texto extraído: ${result.text.slice(0, 120) || 'sem texto reconhecido'}`); } catch (error) { mostrarResultado('error', error.message); } });
+btnLerCodigo.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione uma imagem ou PDF primeiro.'); const result = await window.conversorAPI.lerCodigo(arquivoSelecionado.path); mostrarResultado('success', `Código lido: ${result.text}`); } catch (error) { mostrarResultado('error', error.message); } });
 
 function formatarTamanho(bytes) {
   if (!bytes) return 'Arquivo vazio';
@@ -234,6 +246,7 @@ function mostrarResultado(type, message) {
   resultIcon.textContent = type === 'success' ? '✓' : '!' ;
   resultMessage.textContent = message;
 }
+function mostrarComparacao(before, after) { if (!before || !after) return; const percent = before.bytes ? Math.round((1 - after.bytes / before.bytes) * 100) : 0; const dimensions = (item) => item.width ? `${item.width}×${item.height}` : item.pages ? `${item.pages} página(s)` : '—'; comparisonContent.innerHTML = `<span>Antes: ${formatarTamanho(before.bytes)} · ${dimensions(before)}</span><span>Depois: ${formatarTamanho(after.bytes)} · ${dimensions(after)}</span><strong>${percent >= 0 ? `${percent}% menor` : `${Math.abs(percent)}% maior`}</strong>`; comparisonPanel.hidden = false; }
 
 function atualizarInterfaceInteligente(opcoes) {
   opcoesAtuais = opcoes || null;
@@ -286,6 +299,7 @@ async function escolherArquivo(file, files = [file]) {
   fileName.textContent = file.name;
   fileMeta.textContent = `${formatarTamanho(file.size)}${arquivosSelecionados.length > 1 ? ` · +${arquivosSelecionados.length - 1} na fila` : ''}`;
   fileDetails.hidden = false;
+  comparisonPanel.hidden = true; detalhesEntrada = await window.conversorAPI.detalhesArquivo(file.path).catch(() => null);
   renderizarPrevia(file); renderizarFila();
   const opcoes = await window.conversorAPI.obterOpcoes(file.path);
   preencherFormatos(opcoes);
@@ -337,7 +351,7 @@ btnConverter.addEventListener('click', async () => {
     activeJobId = crypto.randomUUID();
     const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, settings, activeJobId); });
     activeJobId = '';
-    if (result.status === 'concluido') { completed += 1; file.queueStatus = 'done'; registrarHistorico(file.name, result.caminhoArquivo, file.path, formatoSaida.value, settings); }
+    if (result.status === 'concluido') { completed += 1; file.queueStatus = 'done'; registrarHistorico(file.name, result.caminhoArquivo, file.path, formatoSaida.value, settings); if (file === arquivoSelecionado) mostrarComparacao(detalhesEntrada, await window.conversorAPI.detalhesArquivo(result.caminhoArquivo).catch(() => null)); }
     else if (result.status === 'cancelado') { cancelRequested = true; file.queueStatus = 'cancelled'; }
     else { file.queueStatus = 'error'; file.queueError = result.mensagem || 'Erro desconhecido'; }
     renderizarFila();

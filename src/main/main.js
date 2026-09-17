@@ -11,17 +11,20 @@ const { PDFDocument, degrees } = require('pdf-lib');
 const { findGroup, optionsFor, extensionOf } = require('./conversion-catalog');
 const { convertData } = require('./data-converter');
 const { uniqueOutputPath } = require('./output-paths');
+const { MultiFormatReader, BinaryBitmap, HybridBinarizer, RGBLuminanceSource } = require('@zxing/library');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
 const activeConversions = new Map();
+const ruleWatchers = new Map();
+let mainWindow;
 const preferencesFile = () => path.join(app.getPath('userData'), 'omnifree-preferences.json');
-async function readPreferences() { try { return JSON.parse(await fs.readFile(preferencesFile(), 'utf8')); } catch { return { autoUpdates: true }; } }
+async function readPreferences() { try { return JSON.parse(await fs.readFile(preferencesFile(), 'utf8')); } catch { return { autoUpdates: true, rules: [] }; } }
 async function writePreferences(preferences) { await fs.writeFile(preferencesFile(), JSON.stringify(preferences), 'utf8'); }
 
 function createWindow() {
   const win = new BrowserWindow({ width: 1200, height: 800, minWidth: 900, minHeight: 600, backgroundColor: '#0a0e1a', webPreferences: { preload: path.join(__dirname, '../preload/preload.js'), nodeIntegration: false, contextIsolation: true } });
   win.setMenu(null);
-  win.loadFile(path.join(__dirname, '../renderer/index.html'));
+  win.loadFile(path.join(__dirname, '../renderer/index.html')); mainWindow = win;
 }
 
 function run(command, args) {
@@ -54,6 +57,14 @@ function send(event, payload) { event.sender.send('status-conversao', payload); 
 function commandAvailable(command) {
   return new Promise((resolve) => execFile('where.exe', [command], { windowsHide: true }, (error) => resolve(!error)));
 }
+function runOutput(command, args) {
+  return new Promise((resolve, reject) => { const child = spawn(command, args, { windowsHide: true }); let output = ''; let error = ''; child.stdout.on('data', (chunk) => { output += chunk; }); child.stderr.on('data', (chunk) => { error += chunk; }); child.on('error', () => reject(new Error(`O programa necessário “${command}” não foi encontrado.`))); child.on('close', (code) => code === 0 ? resolve(output) : reject(new Error(error || `${command} terminou com erro.`))); });
+}
+async function decodeBarcode(imagePath) {
+  const { data, info } = await sharp(imagePath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const source = new RGBLuminanceSource(new Uint8ClampedArray(data), info.width, info.height);
+  return new MultiFormatReader().decode(new BinaryBitmap(new HybridBinarizer(source))).getText();
+}
 
 ipcMain.handle('opcoes-conversao', (_event, filePath) => optionsFor(filePath));
 ipcMain.handle('escolher-pasta-destino', async () => {
@@ -72,9 +83,35 @@ ipcMain.handle('componentes-disponiveis', async () => ({
   QPDF: await commandAvailable('qpdf'),
   Poppler: await commandAvailable('pdfimages'),
   Ghostscript: await commandAvailable('gswin64c'),
+  Tesseract: await commandAvailable('tesseract'),
   FFmpeg: Boolean(ffmpegStatic),
   Sharp: true
 }));
+ipcMain.handle('detalhes-arquivo', async (_event, filePath) => {
+  const stat = await fs.stat(filePath); const details = { bytes: stat.size };
+  const extension = extensionOf(filePath);
+  if (['png', 'jpg', 'jpeg', 'webp', 'avif', 'tif', 'tiff', 'bmp'].includes(extension)) { const meta = await sharp(filePath).metadata(); details.width = meta.width; details.height = meta.height; }
+  if (extension === 'pdf') { const pdf = await PDFDocument.load(await fs.readFile(filePath)); details.pages = pdf.getPageCount(); }
+  return details;
+});
+ipcMain.handle('ler-codigo', async (_event, input) => {
+  const extension = extensionOf(input); let tempDir = '';
+  try {
+    if (extension !== 'pdf') return { text: await decodeBarcode(input) };
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'omnifree-code-')); await run('pdfimages', ['-png', input, path.join(tempDir, 'page')]);
+    for (const name of await fs.readdir(tempDir)) { try { return { text: await decodeBarcode(path.join(tempDir, name)) }; } catch {} }
+    throw new Error('Nenhum QR Code ou código de barras foi encontrado.');
+  } finally { if (tempDir) await fs.rm(tempDir, { recursive: true, force: true }); }
+});
+ipcMain.handle('ocr-arquivo', async (_event, input, outputDir, language = 'por+eng') => {
+  if (!await commandAvailable('tesseract')) throw new Error('Instale o Tesseract OCR para usar esta ferramenta.');
+  const targetDir = await pdfTargetDir(outputDir); const extension = extensionOf(input); let images = [input]; let tempDir = '';
+  try {
+    if (extension === 'pdf') { tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'omnifree-ocr-')); await run('pdftoppm', ['-png', '-r', '200', input, path.join(tempDir, 'pagina')]); images = (await fs.readdir(tempDir)).filter((name) => name.endsWith('.png')).map((name) => path.join(tempDir, name)); }
+    const text = (await Promise.all(images.map((image) => runOutput('tesseract', [image, 'stdout', '-l', language])))).join('\n\n');
+    const output = await uniqueOutputPath(targetDir, 'OmniFree_OCR', 'txt'); await fs.writeFile(output, text, 'utf8'); return { output, text };
+  } finally { if (tempDir) await fs.rm(tempDir, { recursive: true, force: true }); }
+});
 function parsePages(value, count) {
   const pages = new Set();
   for (const part of String(value || '').split(',')) {
@@ -97,6 +134,12 @@ ipcMain.handle('verificar-atualizacoes', async () => {
 });
 ipcMain.handle('obter-preferencias', readPreferences);
 ipcMain.handle('salvar-preferencias', async (_event, preferences) => { await writePreferences({ autoUpdates: preferences?.autoUpdates !== false }); return readPreferences(); });
+function configureRules(rules = []) {
+  ruleWatchers.forEach((watcher) => watcher.close()); ruleWatchers.clear();
+  rules.forEach((rule) => { try { const watcher = require('fs').watch(rule.folder, { recursive: true }, (_event, filename) => { if (!filename) return; const input = path.join(rule.folder, filename); if (path.resolve(input).startsWith(path.resolve(rule.outputDir))) return; setTimeout(() => mainWindow?.webContents.send('arquivo-regra', { input, target: rule.target, outputDir: rule.outputDir }), 500); }); ruleWatchers.set(rule.folder, watcher); } catch (error) { console.warn('Não foi possível monitorar regra:', error.message); } });
+}
+ipcMain.handle('obter-regras', async () => (await readPreferences()).rules || []);
+ipcMain.handle('salvar-regras', async (_event, rules) => { const preferences = await readPreferences(); preferences.rules = Array.isArray(rules) ? rules : []; await writePreferences(preferences); configureRules(preferences.rules); return preferences.rules; });
 ipcMain.handle('mesclar-pdfs', async () => {
   const selected = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], filters: [{ name: 'PDF', extensions: ['pdf'] }] });
   if (selected.canceled || selected.filePaths.length < 2) return { canceled: true };
@@ -218,6 +261,7 @@ ipcMain.on('abrir-no-explorador', (_event, filePath) => { if (filePath) shell.sh
 app.whenReady().then(async () => {
   createWindow();
   const preferences = await readPreferences();
+  configureRules(preferences.rules || []);
   if (app.isPackaged && preferences.autoUpdates !== false) autoUpdater.checkForUpdatesAndNotify().catch((error) => console.warn('Não foi possível verificar atualizações:', error.message));
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 });
