@@ -38,6 +38,7 @@ const btnJuntarPdf = document.getElementById('btn-juntar-pdf');
 const btnSepararPdf = document.getElementById('btn-separar-pdf');
 const btnGirarPdf = document.getElementById('btn-girar-pdf');
 const btnTheme = document.getElementById('btn-theme');
+const language = document.getElementById('language');
 const btnProtegerPdf = document.getElementById('btn-proteger-pdf');
 const btnOtimizarPdf = document.getElementById('btn-otimizar-pdf');
 const btnExtrairImagens = document.getElementById('btn-extrair-imagens');
@@ -68,6 +69,8 @@ const savedTheme = localStorage.getItem('omnifree-theme');
 if (savedTheme === 'light') document.body.classList.add('light');
 btnTheme.textContent = document.body.classList.contains('light') ? '◐' : '☼';
 btnTheme.addEventListener('click', () => { document.body.classList.toggle('light'); const theme = document.body.classList.contains('light') ? 'light' : 'dark'; localStorage.setItem('omnifree-theme', theme); btnTheme.textContent = theme === 'light' ? '◐' : '☼'; });
+language.value = localStorage.getItem('omnifree-language') || 'pt-BR';
+language.addEventListener('change', () => { localStorage.setItem('omnifree-language', language.value); document.documentElement.lang = language.value; location.reload(); });
 
 function atualizarQualidade() { qualityValue.textContent = `${quality.value}%`; }
 quality.addEventListener('input', atualizarQualidade);
