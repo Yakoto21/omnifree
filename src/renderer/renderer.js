@@ -33,6 +33,8 @@ const noAudio = document.getElementById('no-audio');
 const removeMetadata = document.getElementById('remove-metadata');
 const watermark = document.getElementById('watermark');
 const cropImage = document.getElementById('crop-image');
+const cropGrid = document.getElementById('crop-grid');
+const batchSizes = document.getElementById('batch-sizes');
 const btnWatermarkImage = document.getElementById('btn-watermark-image');
 const watermarkImageName = document.getElementById('watermark-image-name');
 const componentsStatus = document.getElementById('components-status');
@@ -61,10 +63,11 @@ let arquivosSelecionados = [];
 let queueResolve = null;
 let formatosDisponiveis = [];
 let watermarkImage = '';
+let cropPosition = 'centre';
 
 const translations = {
-  'pt-BR': { subtitle: 'Converta arquivos no seu computador, com privacidade.', local: '● 100% local', choose: 'Escolha um arquivo', chooseHint: 'Arraste-o para cá ou selecione-o no computador.', drop: 'Arraste um arquivo ou pasta aqui', browse: 'ou clique para procurar', folder: 'Pasta', change: 'Trocar', formatTitle: 'Defina o formato', formatHint: 'Escolha um arquivo para ver os formatos disponíveis.', convert: 'Converter arquivo', outputName: 'Nome do resultado', preset: 'Pré-ajuste', balanced: 'Equilibrado', small: 'Arquivo menor', highQuality: 'Maior qualidade', whatsapp: 'Compartilhar no WhatsApp', quality: 'Qualidade', destination: 'Destino', desktop: 'Área de Trabalho', more: 'Mais opções', width: 'Largura (imagem)', height: 'Altura (imagem)', crop: 'Recortar para preencher', watermark: 'Marca-d’água (imagem)', watermarkImage: 'Imagem de marca-d’água', chooseImage: 'Escolher imagem', start: 'Início de mídia', duration: 'Duração de mídia', audioOnly: 'Extrair somente áudio', noAudio: 'Remover áudio', metadata: 'Remover metadados', recent: 'Conversões recentes', viewAll: 'Ver tudo', clear: 'Limpar', historyTitle: 'Histórico completo', historyHint: 'Abra, repita ou remova uma conversão.' },
-  en: { subtitle: 'Convert files on your computer, privately.', local: '● 100% local', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', drop: 'Drag a file or folder here', browse: 'or click to browse', folder: 'Folder', change: 'Change', formatTitle: 'Choose the format', formatHint: 'Choose a file to see available formats.', convert: 'Convert file', outputName: 'Output name', preset: 'Preset', balanced: 'Balanced', small: 'Smaller file', highQuality: 'Higher quality', whatsapp: 'Share on WhatsApp', quality: 'Quality', destination: 'Destination', desktop: 'Desktop', more: 'More options', width: 'Width (image)', height: 'Height (image)', crop: 'Crop to fill', watermark: 'Watermark (image)', watermarkImage: 'Image watermark', chooseImage: 'Choose image', start: 'Media start', duration: 'Media duration', audioOnly: 'Extract audio only', noAudio: 'Remove audio', metadata: 'Remove metadata', recent: 'Recent conversions', viewAll: 'View all', clear: 'Clear', historyTitle: 'Full history', historyHint: 'Open, repeat, or remove a conversion.' }
+  'pt-BR': { subtitle: 'Converta arquivos no seu computador, com privacidade.', local: '● 100% local', choose: 'Escolha um arquivo', chooseHint: 'Arraste-o para cá ou selecione-o no computador.', drop: 'Arraste um arquivo ou pasta aqui', browse: 'ou clique para procurar', folder: 'Pasta', change: 'Trocar', formatTitle: 'Defina o formato', formatHint: 'Escolha um arquivo para ver os formatos disponíveis.', convert: 'Converter arquivo', outputName: 'Nome do resultado', preset: 'Pré-ajuste', balanced: 'Equilibrado', small: 'Arquivo menor', highQuality: 'Maior qualidade', whatsapp: 'Compartilhar no WhatsApp', quality: 'Qualidade', destination: 'Destino', desktop: 'Área de Trabalho', more: 'Mais opções', width: 'Largura (imagem)', height: 'Altura (imagem)', crop: 'Recortar para preencher', cropArea: 'Área do recorte', batchSizes: 'Tamanhos extras no lote', watermark: 'Marca-d’água (imagem)', watermarkImage: 'Imagem de marca-d’água', chooseImage: 'Escolher imagem', start: 'Início de mídia', duration: 'Duração de mídia', audioOnly: 'Extrair somente áudio', noAudio: 'Remover áudio', metadata: 'Remover metadados', recent: 'Conversões recentes', viewAll: 'Ver tudo', clear: 'Limpar', historyTitle: 'Histórico completo', historyHint: 'Abra, repita ou remova uma conversão.' },
+  en: { subtitle: 'Convert files on your computer, privately.', local: '● 100% local', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', drop: 'Drag a file or folder here', browse: 'or click to browse', folder: 'Folder', change: 'Change', formatTitle: 'Choose the format', formatHint: 'Choose a file to see available formats.', convert: 'Convert file', outputName: 'Output name', preset: 'Preset', balanced: 'Balanced', small: 'Smaller file', highQuality: 'Higher quality', whatsapp: 'Share on WhatsApp', quality: 'Quality', destination: 'Destination', desktop: 'Desktop', more: 'More options', width: 'Width (image)', height: 'Height (image)', crop: 'Crop to fill', cropArea: 'Crop area', batchSizes: 'Extra batch sizes', watermark: 'Watermark (image)', watermarkImage: 'Image watermark', chooseImage: 'Choose image', start: 'Media start', duration: 'Media duration', audioOnly: 'Extract audio only', noAudio: 'Remove audio', metadata: 'Remove metadata', recent: 'Recent conversions', viewAll: 'View all', clear: 'Clear', historyTitle: 'Full history', historyHint: 'Open, repeat, or remove a conversion.' }
 };
 function t(key) { return (translations[language.value] || translations['pt-BR'])[key] || key; }
 
@@ -105,6 +108,7 @@ btnDestino.addEventListener('click', async () => {
   if (pasta) { pastaDestino = pasta; btnDestino.textContent = 'Pasta escolhida'; }
 });
 btnWatermarkImage.addEventListener('click', async () => { const selected = await window.conversorAPI.escolherImagemMarcaDagua(); if (selected) { watermarkImage = selected; watermarkImageName.textContent = selected.split(/[\\/]/).pop(); } });
+cropGrid.addEventListener('click', (event) => { const button = event.target.closest('button[data-position]'); if (!button) return; cropPosition = button.dataset.position; cropGrid.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); });
 async function atualizarComponentes() {
   const components = await window.conversorAPI.obterComponentes();
   const active = Object.values(components).filter(Boolean).length;
@@ -230,13 +234,20 @@ dropZone.addEventListener('drop', async (event) => { event.preventDefault(); dro
 btnConverter.addEventListener('click', async () => {
   if (!arquivoSelecionado || !formatoSaida.value) return;
   btnConverter.disabled = true; progressContainer.hidden = false; resultPanel.hidden = true; btnAbrir.hidden = true;
-  let completed = 0;
+  const sizeVariants = batchSizes.value.split(',').map((value) => value.trim().match(/^(\d{1,5})\s*[xX]\s*(\d{1,5})$/)).filter(Boolean).map((match) => ({ width: match[1], height: match[2], label: `${match[1]}x${match[2]}` }));
+  const jobs = [];
   for (const file of arquivosSelecionados) {
     const options = await window.conversorAPI.obterOpcoes(file.path);
     if (!options.formats.includes(formatoSaida.value)) continue;
-    progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${completed + 1} de ${arquivosSelecionados.length}: ${file.name}`;
-    const batchName = outputName.value ? (arquivosSelecionados.length === 1 ? outputName.value : `${outputName.value}_${completed + 1}`) : '';
-    const settings = { outputDir: pastaDestino, outputName: batchName, quality: quality.value, width: width.value, height: height.value, cropImage: cropImage.checked, watermark: watermark.value, watermarkImage, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked };
+    (sizeVariants.length ? sizeVariants : [{ width: width.value, height: height.value, label: '' }]).forEach((size) => jobs.push({ file, size }));
+  }
+  let completed = 0;
+  for (const [jobIndex, job] of jobs.entries()) {
+    const { file, size } = job;
+    progressBar.style.width = '0%'; progressText.textContent = '0%'; progressState.textContent = `Arquivo ${jobIndex + 1} de ${jobs.length}: ${file.name}`;
+    const suffix = [jobs.length > 1 ? jobIndex + 1 : '', size.label].filter(Boolean).join('_');
+    const batchName = outputName.value ? `${outputName.value}${suffix ? `_${suffix}` : ''}` : '';
+    const settings = { outputDir: pastaDestino, outputName: batchName, quality: quality.value, width: size.width, height: size.height, cropImage: cropImage.checked, cropPosition, watermark: watermark.value, watermarkImage, startTime: startTime.value, duration: duration.value, audioOnly: audioOnly.checked, noAudio: noAudio.checked, removeMetadata: removeMetadata.checked };
     const result = await new Promise((resolve) => { queueResolve = resolve; window.conversorAPI.enviarArquivo(file.path, formatoSaida.value, settings); });
     if (result.status === 'concluido') { completed += 1; registrarHistorico(file.name, result.caminhoArquivo, file.path, formatoSaida.value, settings); }
   }

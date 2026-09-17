@@ -126,7 +126,7 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}) => {
     send(event, { status: 'processando', mensagem: `Convertendo para ${target.toUpperCase()}...` });
     if (group.engine === 'sharp') {
       let image = sharp(input, { sequentialRead: true });
-      if (settings.width || settings.height) image = image.resize({ width: Number(settings.width) || undefined, height: Number(settings.height) || undefined, fit: settings.cropImage ? 'cover' : 'inside', position: 'centre', withoutEnlargement: !settings.cropImage });
+      if (settings.width || settings.height) image = image.resize({ width: Number(settings.width) || undefined, height: Number(settings.height) || undefined, fit: settings.cropImage ? 'cover' : 'inside', position: settings.cropPosition || 'centre', withoutEnlargement: !settings.cropImage });
       const overlays = [];
       if (settings.watermark) overlays.push({ input: Buffer.from(`<svg width="800" height="80"><text x="20" y="55" font-size="42" fill="white" fill-opacity="0.7">${String(settings.watermark).replace(/[<&>]/g, '')}</text></svg>`), gravity: 'southeast' });
       if (settings.watermarkImage) { await fs.access(settings.watermarkImage); overlays.push({ input: settings.watermarkImage, gravity: 'southeast', opacity: 0.72 }); }
