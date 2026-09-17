@@ -18,6 +18,10 @@ function run(command, args) {
   });
 }
 
+async function available(command) {
+  try { await run('where.exe', [command]); return true; } catch { return false; }
+}
+
 test('Sharp converte uma imagem de verdade para PNG', async () => {
   const output = await sharp(Buffer.from('<svg width="12" height="12"><rect width="12" height="12" fill="#4477cc"/></svg>')).png().toBuffer();
   assert.equal(output.subarray(1, 4).toString(), 'PNG');
@@ -39,4 +43,34 @@ test('PDF-lib cria e relê um PDF para as ferramentas de PDF', async () => {
   const saved = await document.save();
   const reloaded = await PDFDocument.load(saved);
   assert.equal(reloaded.getPageCount(), 1);
+});
+
+test('LibreOffice converte um documento quando está instalado', async (t) => {
+  if (!await available('soffice')) return t.skip('LibreOffice não está instalado neste computador');
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'omnifree-office-'));
+  try {
+    const input = path.join(folder, 'source.txt'); await fs.writeFile(input, 'OmniFree');
+    await run('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', folder, input]);
+    assert.ok((await fs.stat(path.join(folder, 'source.pdf'))).size > 0);
+  } finally { await fs.rm(folder, { recursive: true, force: true }); }
+});
+
+test('7-Zip cria um arquivo compactado quando está instalado', async (t) => {
+  if (!await available('7z')) return t.skip('7-Zip não está instalado neste computador');
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'omnifree-archive-'));
+  try {
+    const input = path.join(folder, 'source.txt'); const output = path.join(folder, 'result.zip'); await fs.writeFile(input, 'OmniFree');
+    await run('7z', ['a', '-tzip', output, input]);
+    assert.ok((await fs.stat(output)).size > 0);
+  } finally { await fs.rm(folder, { recursive: true, force: true }); }
+});
+
+test('Calibre gera um e-book quando está instalado', async (t) => {
+  if (!await available('ebook-convert')) return t.skip('Calibre não está instalado neste computador');
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'omnifree-ebook-'));
+  try {
+    const input = path.join(folder, 'source.html'); const output = path.join(folder, 'result.epub'); await fs.writeFile(input, '<h1>OmniFree</h1>');
+    await run('ebook-convert', [input, output]);
+    assert.ok((await fs.stat(output)).size > 0);
+  } finally { await fs.rm(folder, { recursive: true, force: true }); }
 });
