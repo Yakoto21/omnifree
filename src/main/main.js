@@ -69,6 +69,17 @@ ipcMain.handle('componentes-disponiveis', async () => ({
   FFmpeg: Boolean(ffmpegStatic),
   Sharp: true
 }));
+ipcMain.handle('verificar-atualizacoes', async () => {
+  if (!app.isPackaged) return { status: 'development', message: 'A verificação de atualizações funciona na versão instalada do OmniFree.' };
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    const latest = result?.updateInfo?.version;
+    if (latest && latest !== app.getVersion()) return { status: 'available', message: `A versão ${latest} está disponível e será baixada automaticamente.` };
+    return { status: 'latest', message: `Você já está usando a versão mais recente (${app.getVersion()}).` };
+  } catch (error) {
+    return { status: 'error', message: `Não foi possível verificar atualizações: ${error.message}` };
+  }
+});
 ipcMain.handle('mesclar-pdfs', async () => {
   const selected = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], filters: [{ name: 'PDF', extensions: ['pdf'] }] });
   if (selected.canceled || selected.filePaths.length < 2) return { canceled: true };

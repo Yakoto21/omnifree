@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('conversorAPI', {
   escolherPastaDestino: () => ipcRenderer.invoke('escolher-pasta-destino'),
   escolherImagemMarcaDagua: () => ipcRenderer.invoke('escolher-imagem-marca-dagua'),
   obterComponentes: () => ipcRenderer.invoke('componentes-disponiveis'),
+  verificarAtualizacoes: () => ipcRenderer.invoke('verificar-atualizacoes'),
   mesclarPdfs: () => ipcRenderer.invoke('mesclar-pdfs'),
   separarPdf: (caminho, pasta) => ipcRenderer.invoke('separar-pdf', caminho, pasta),
   girarPdf: (caminho, pasta) => ipcRenderer.invoke('girar-pdf', caminho, pasta),
