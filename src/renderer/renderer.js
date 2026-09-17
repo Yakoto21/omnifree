@@ -153,8 +153,14 @@ btnFecharHistorico.addEventListener('click', () => historyDialog.close());
 historyDialog.addEventListener('click', (event) => { if (event.target === historyDialog) historyDialog.close(); });
 const savedTheme = localStorage.getItem('omnifree-theme');
 if (savedTheme === 'light') document.body.classList.add('light');
-btnTheme.textContent = document.body.classList.contains('light') ? '◐' : '☼';
-btnTheme.addEventListener('click', () => { document.body.classList.toggle('light'); const theme = document.body.classList.contains('light') ? 'light' : 'dark'; localStorage.setItem('omnifree-theme', theme); btnTheme.textContent = theme === 'light' ? '◐' : '☼'; });
+function updateThemeButton() {
+  const isLight = document.body.classList.contains('light');
+  btnTheme.textContent = isLight ? '◐' : '☼';
+  btnTheme.title = isLight ? 'Usar tema escuro' : 'Usar tema claro';
+  btnTheme.setAttribute('aria-label', btnTheme.title);
+}
+updateThemeButton();
+btnTheme.addEventListener('click', () => { document.body.classList.toggle('light'); const theme = document.body.classList.contains('light') ? 'light' : 'dark'; localStorage.setItem('omnifree-theme', theme); updateThemeButton(); });
 language.value = localStorage.getItem('omnifree-language') || 'pt-BR';
 function applyLanguage() { const locale = language.value; document.documentElement.lang = locale; document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = t(element.dataset.i18n); }); formatSearch.placeholder = locale === 'en' ? 'Search format' : 'Pesquisar formato'; const labels = locale === 'en' ? ['All categories', 'Images', 'Audio & video', 'Documents', 'Archives', 'E-books', 'Data'] : ['Todas as categorias', 'Imagens', 'Áudio e vídeo', 'Documentos', 'Compactados', 'E-books', 'Dados']; [...categoryFilter.options].forEach((option, index) => { option.textContent = labels[index]; }); atualizarHistorico(); atualizarInterfaceInteligente(opcoesAtuais); }
 applyLanguage();
@@ -178,7 +184,7 @@ btnConfiguracoes.addEventListener('click', async () => { pastaDestinoPadrao = lo
 btnAdicionarRegra.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (!folder) return; const outputDir = await window.conversorAPI.escolherPastaDestino(); if (!outputDir || outputDir === folder) return window.alert('Escolha uma pasta de saída diferente.'); const target = window.prompt('Formato automático: mp3, pdf ou webp', 'webp'); if (!['mp3', 'pdf', 'webp'].includes((target || '').toLowerCase())) return; regrasAutomaticas.push({ folder, outputDir, target: target.toLowerCase() }); rulesStatus.textContent = `${regrasAutomaticas.length} regra(s) ativa(s)`; });
 btnFecharConfiguracoes.addEventListener('click', () => settingsDialog.close());
 btnDestinoPadrao.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (folder) { pastaDestinoPadrao = folder; btnDestinoPadrao.textContent = 'Pasta escolhida'; } });
-btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); document.body.classList.toggle('light', settingsTheme.value === 'light'); localStorage.setItem('omnifree-theme', settingsTheme.value); btnTheme.textContent = settingsTheme.value === 'light' ? '◐' : '☼'; language.value = settingsLanguage.value; localStorage.setItem('omnifree-language', language.value); applyLanguage(); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); await window.conversorAPI.salvarRegras(regrasAutomaticas); settingsDialog.close(); });
+btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); document.body.classList.toggle('light', settingsTheme.value === 'light'); localStorage.setItem('omnifree-theme', settingsTheme.value); updateThemeButton(); language.value = settingsLanguage.value; localStorage.setItem('omnifree-language', language.value); applyLanguage(); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); await window.conversorAPI.salvarRegras(regrasAutomaticas); settingsDialog.close(); });
 window.conversorAPI.receberArquivoRegra(async (rule) => { const options = await window.conversorAPI.obterOpcoes(rule.input); if (!options.formats.includes(rule.target)) return; const id = crypto.randomUUID(); window.conversorAPI.enviarArquivo(rule.input, rule.target, { outputDir: rule.outputDir }, id); });
 btnWatermarkImage.addEventListener('click', async () => { const selected = await window.conversorAPI.escolherImagemMarcaDagua(); if (selected) { watermarkImage = selected; watermarkImageName.textContent = selected.split(/[\\/]/).pop(); } });
 cropGrid.addEventListener('click', (event) => { const button = event.target.closest('button[data-position]'); if (!button) return; cropPosition = button.dataset.position; cropGrid.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); });
