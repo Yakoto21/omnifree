@@ -36,6 +36,8 @@ const btnFecharConfiguracoes = document.getElementById('btn-fechar-configuracoes
 const btnSalvarConfiguracoes = document.getElementById('btn-salvar-configuracoes');
 const btnDestinoPadrao = document.getElementById('btn-destino-padrao');
 const autoUpdates = document.getElementById('auto-updates');
+const settingsTheme = document.getElementById('settings-theme');
+const settingsLanguage = document.getElementById('settings-language');
 const quality = document.getElementById('quality');
 const qualityValue = document.getElementById('quality-value');
 const btnDestino = document.getElementById('btn-destino');
@@ -134,10 +136,10 @@ btnDestino.addEventListener('click', async () => {
   const pasta = await window.conversorAPI.escolherPastaDestino();
   if (pasta) { pastaDestino = pasta; btnDestino.textContent = 'Pasta escolhida'; }
 });
-btnConfiguracoes.addEventListener('click', async () => { pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || ''; btnDestinoPadrao.textContent = pastaDestinoPadrao ? 'Pasta escolhida' : 'Área de Trabalho'; const preferences = await window.conversorAPI.obterPreferencias(); autoUpdates.checked = preferences.autoUpdates !== false; settingsDialog.showModal(); });
+btnConfiguracoes.addEventListener('click', async () => { pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || ''; btnDestinoPadrao.textContent = pastaDestinoPadrao ? 'Pasta escolhida' : 'Área de Trabalho'; settingsTheme.value = document.body.classList.contains('light') ? 'light' : 'dark'; settingsLanguage.value = language.value; const preferences = await window.conversorAPI.obterPreferencias(); autoUpdates.checked = preferences.autoUpdates !== false; settingsDialog.showModal(); });
 btnFecharConfiguracoes.addEventListener('click', () => settingsDialog.close());
 btnDestinoPadrao.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (folder) { pastaDestinoPadrao = folder; btnDestinoPadrao.textContent = 'Pasta escolhida'; } });
-btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); settingsDialog.close(); });
+btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); document.body.classList.toggle('light', settingsTheme.value === 'light'); localStorage.setItem('omnifree-theme', settingsTheme.value); btnTheme.textContent = settingsTheme.value === 'light' ? '◐' : '☼'; language.value = settingsLanguage.value; localStorage.setItem('omnifree-language', language.value); applyLanguage(); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); settingsDialog.close(); });
 btnWatermarkImage.addEventListener('click', async () => { const selected = await window.conversorAPI.escolherImagemMarcaDagua(); if (selected) { watermarkImage = selected; watermarkImageName.textContent = selected.split(/[\\/]/).pop(); } });
 cropGrid.addEventListener('click', (event) => { const button = event.target.closest('button[data-position]'); if (!button) return; cropPosition = button.dataset.position; cropGrid.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); });
 async function atualizarComponentes() {
