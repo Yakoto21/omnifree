@@ -71,9 +71,19 @@ ipcMain.handle('componentes-disponiveis', async () => ({
   Calibre: await commandAvailable('ebook-convert'),
   QPDF: await commandAvailable('qpdf'),
   Poppler: await commandAvailable('pdfimages'),
+  Ghostscript: await commandAvailable('gswin64c'),
   FFmpeg: Boolean(ffmpegStatic),
   Sharp: true
 }));
+function parsePages(value, count) {
+  const pages = new Set();
+  for (const part of String(value || '').split(',')) {
+    const match = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/); if (!match) continue;
+    const first = Number(match[1]); const last = Number(match[2] || first);
+    for (let page = Math.max(1, first); page <= Math.min(count, last); page += 1) pages.add(page - 1);
+  }
+  return [...pages].sort((a, b) => a - b);
+}
 ipcMain.handle('verificar-atualizacoes', async () => {
   if (!app.isPackaged) return { status: 'development', message: 'A verificação de atualizações funciona na versão instalada do OmniFree.' };
   try {
@@ -109,6 +119,13 @@ ipcMain.handle('separar-pdf', async (_event, input, outputDir) => {
   }
   return outputs;
 });
+ipcMain.handle('extrair-paginas-pdf', async (_event, input, outputDir, pagesText) => {
+  if (extensionOf(input) !== 'pdf') throw new Error('Selecione um PDF primeiro.');
+  const targetDir = await pdfTargetDir(outputDir); const source = await PDFDocument.load(await fs.readFile(input)); const indexes = parsePages(pagesText, source.getPageCount());
+  if (!indexes.length) throw new Error('Informe páginas válidas, por exemplo: 1, 3-5.');
+  const document = await PDFDocument.create(); (await document.copyPages(source, indexes)).forEach((page) => document.addPage(page));
+  const output = await uniqueOutputPath(targetDir, 'OmniFree_paginas', 'pdf'); await fs.writeFile(output, await document.save()); return output;
+});
 ipcMain.handle('girar-pdf', async (_event, input, outputDir) => {
   if (extensionOf(input) !== 'pdf') throw new Error('Selecione um PDF primeiro.');
   const targetDir = outputDir && await fs.stat(outputDir).then((stat) => stat.isDirectory()).catch(() => false) ? outputDir : path.join(os.homedir(), 'Desktop');
@@ -123,10 +140,23 @@ ipcMain.handle('proteger-pdf', async (_event, input, outputDir, password) => {
   const targetDir = await pdfTargetDir(outputDir); const output = path.join(targetDir, `OmniFree_protegido_${Date.now()}.pdf`);
   await run('qpdf', ['--encrypt', password, password, '256', '--', input, output]); return output;
 });
-ipcMain.handle('otimizar-pdf', async (_event, input, outputDir) => {
+ipcMain.handle('otimizar-pdf', async (_event, input, outputDir, mode = 'balanced') => {
   if (extensionOf(input) !== 'pdf') throw new Error('Selecione um PDF primeiro.');
   const targetDir = await pdfTargetDir(outputDir); const output = path.join(targetDir, `OmniFree_otimizado_${Date.now()}.pdf`);
-  await run('qpdf', ['--stream-data=compress', '--object-streams=generate', input, output]); return output;
+  const ghostscript = await commandAvailable('gswin64c');
+  if (ghostscript) { const preset = mode === 'small' ? '/screen' : mode === 'quality' ? '/printer' : '/ebook'; await run('gswin64c', ['-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4', `-dPDFSETTINGS=${preset}`, '-dNOPAUSE', '-dQUIET', '-dBATCH', `-sOutputFile=${output}`, input]); }
+  else await run('qpdf', ['--stream-data=compress', '--object-streams=generate', input, output]); return output;
+});
+ipcMain.handle('pagina-web-para-pdf', async (_event, url, outputDir) => {
+  let parsed; try { parsed = new URL(url); } catch { throw new Error('Informe uma URL válida.'); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Use apenas páginas HTTP ou HTTPS.');
+  const targetDir = await pdfTargetDir(outputDir); const output = await uniqueOutputPath(targetDir, 'OmniFree_pagina_web', 'pdf');
+  const page = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  try { await page.loadURL(parsed.toString()); await fs.writeFile(output, await page.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })); return output; } finally { if (!page.isDestroyed()) page.destroy(); }
+});
+ipcMain.handle('extrair-legendas', async (_event, input, outputDir, format = 'srt') => {
+  const targetDir = await pdfTargetDir(outputDir); const output = await uniqueOutputPath(targetDir, 'OmniFree_legendas', format);
+  await new Promise((resolve, reject) => ffmpeg(input).outputOptions(['-map', '0:s:0']).toFormat(format).on('end', resolve).on('error', reject).save(output)); return output;
 });
 ipcMain.handle('extrair-imagens-pdf', async (_event, input, outputDir) => {
   if (extensionOf(input) !== 'pdf') throw new Error('Selecione um PDF primeiro.');

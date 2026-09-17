@@ -62,12 +62,15 @@ const btnVerificarAtualizacoes = document.getElementById('btn-verificar-atualiza
 const updatesStatus = document.getElementById('updates-status');
 const btnJuntarPdf = document.getElementById('btn-juntar-pdf');
 const btnSepararPdf = document.getElementById('btn-separar-pdf');
+const btnExtrairPaginas = document.getElementById('btn-extrair-paginas');
 const btnGirarPdf = document.getElementById('btn-girar-pdf');
 const btnTheme = document.getElementById('btn-theme');
 const language = document.getElementById('language');
 const btnProtegerPdf = document.getElementById('btn-proteger-pdf');
 const btnOtimizarPdf = document.getElementById('btn-otimizar-pdf');
 const btnExtrairImagens = document.getElementById('btn-extrair-imagens');
+const btnWebPdf = document.getElementById('btn-web-pdf');
+const btnLegendas = document.getElementById('btn-legendas');
 const historyList = document.getElementById('history-list');
 const historyItems = document.getElementById('history-items');
 const btnLimparHistorico = document.getElementById('btn-limpar-historico');
@@ -170,6 +173,7 @@ btnSepararPdf.addEventListener('click', async () => {
     ultimoArquivoConvertido = files[0]; btnAbrir.hidden = false; mostrarResultado('success', `${files.length} página(s) foram separadas.`);
   } catch (error) { mostrarResultado('error', error.message); }
 });
+btnExtrairPaginas.addEventListener('click', async () => { try { const pages = window.prompt('Quais páginas? Exemplo: 1, 3-5'); if (!pages) return; ultimoArquivoConvertido = await window.conversorAPI.extrairPaginasPdf(pdfSelecionado(), pastaDestino || pastaDestinoPadrao, pages); btnAbrir.hidden = false; mostrarResultado('success', 'Páginas extraídas com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
 btnGirarPdf.addEventListener('click', async () => {
   try {
     if (!arquivoSelecionado || !arquivoSelecionado.name.toLowerCase().endsWith('.pdf')) throw new Error('Selecione um PDF primeiro.');
@@ -187,11 +191,13 @@ btnProtegerPdf.addEventListener('click', async () => {
   } catch (error) { mostrarResultado('error', error.message); }
 });
 btnOtimizarPdf.addEventListener('click', async () => {
-  try { ultimoArquivoConvertido = await window.conversorAPI.otimizarPdf(pdfSelecionado(), pastaDestino); btnAbrir.hidden = false; mostrarResultado('success', 'PDF otimizado.'); } catch (error) { mostrarResultado('error', error.message); }
+  try { const selected = window.prompt('Compactação: menor, equilibrado ou qualidade', 'equilibrado'); if (!selected) return; const mode = selected.toLowerCase().startsWith('men') ? 'small' : selected.toLowerCase().startsWith('qual') ? 'quality' : 'balanced'; ultimoArquivoConvertido = await window.conversorAPI.otimizarPdf(pdfSelecionado(), pastaDestino || pastaDestinoPadrao, mode); btnAbrir.hidden = false; mostrarResultado('success', 'PDF compactado.'); } catch (error) { mostrarResultado('error', error.message); }
 });
 btnExtrairImagens.addEventListener('click', async () => {
   try { const folder = await window.conversorAPI.extrairImagensPdf(pdfSelecionado(), pastaDestino); ultimoArquivoConvertido = folder; btnAbrir.hidden = false; mostrarResultado('success', 'Imagens extraídas para uma nova pasta.'); } catch (error) { mostrarResultado('error', error.message); }
 });
+btnWebPdf.addEventListener('click', async () => { try { const url = window.prompt('Cole o endereço da página (https://…):'); if (!url) return; ultimoArquivoConvertido = await window.conversorAPI.paginaWebParaPdf(url, pastaDestino || pastaDestinoPadrao); btnAbrir.hidden = false; mostrarResultado('success', 'Página salva como PDF.'); } catch (error) { mostrarResultado('error', error.message); } });
+btnLegendas.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); const format = window.prompt('Formato da legenda: srt, vtt ou ass', 'srt'); if (!format) return; ultimoArquivoConvertido = await window.conversorAPI.extrairLegendas(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, ['srt', 'vtt', 'ass'].includes(format.toLowerCase()) ? format.toLowerCase() : 'srt'); btnAbrir.hidden = false; mostrarResultado('success', 'Legenda extraída com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
 
 function formatarTamanho(bytes) {
   if (!bytes) return 'Arquivo vazio';
