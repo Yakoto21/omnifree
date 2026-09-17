@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, clipboard } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs/promises');
@@ -201,6 +201,10 @@ ipcMain.handle('extrair-legendas', async (_event, input, outputDir, format = 'sr
   const targetDir = await pdfTargetDir(outputDir); const output = await uniqueOutputPath(targetDir, 'OmniFree_legendas', format);
   await new Promise((resolve, reject) => ffmpeg(input).outputOptions(['-map', '0:s:0']).toFormat(format).on('end', resolve).on('error', reject).save(output)); return output;
 });
+ipcMain.handle('gerar-thumbnail', async (_event, input, outputDir, time = '00:00:01') => {
+  const targetDir = await pdfTargetDir(outputDir); const output = await uniqueOutputPath(targetDir, 'OmniFree_thumbnail', 'jpg');
+  await new Promise((resolve, reject) => ffmpeg(input).seekInput(time).frames(1).outputOptions(['-q:v', '2']).on('end', resolve).on('error', reject).save(output)); return output;
+});
 ipcMain.handle('extrair-imagens-pdf', async (_event, input, outputDir) => {
   if (extensionOf(input) !== 'pdf') throw new Error('Selecione um PDF primeiro.');
   const targetDir = await pdfTargetDir(outputDir); const folder = path.join(targetDir, `OmniFree_imagens_${Date.now()}`); await fs.mkdir(folder);
@@ -258,6 +262,8 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}, jobI
 ipcMain.on('cancelar-conversao', (_event, jobId) => { const job = activeConversions.get(jobId); if (job) { job.cancelled = true; job.cancel?.(); } });
 
 ipcMain.on('abrir-no-explorador', (_event, filePath) => { if (filePath) shell.showItemInFolder(filePath); });
+ipcMain.on('copiar-caminho', (_event, filePath) => { if (filePath) clipboard.writeText(filePath); });
+ipcMain.on('arrastar-arquivo', (event, filePath) => { if (filePath) event.sender.startDrag({ file: filePath, icon: path.join(__dirname, '../../build/omnifree-icon.png') }); });
 app.whenReady().then(async () => {
   createWindow();
   const preferences = await readPreferences();

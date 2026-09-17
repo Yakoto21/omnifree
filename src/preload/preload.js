@@ -24,8 +24,11 @@ contextBridge.exposeInMainWorld('conversorAPI', {
   otimizarPdf: (caminho, pasta, modo) => ipcRenderer.invoke('otimizar-pdf', caminho, pasta, modo),
   paginaWebParaPdf: (url, pasta) => ipcRenderer.invoke('pagina-web-para-pdf', url, pasta),
   extrairLegendas: (caminho, pasta, formato) => ipcRenderer.invoke('extrair-legendas', caminho, pasta, formato),
+  gerarThumbnail: (caminho, pasta, tempo) => ipcRenderer.invoke('gerar-thumbnail', caminho, pasta, tempo),
   extrairImagensPdf: (caminho, pasta) => ipcRenderer.invoke('extrair-imagens-pdf', caminho, pasta),
   receberStatus: (callback) => ipcRenderer.on('status-conversao', (_event, dados) => callback(dados)),
   receberProgresso: (callback) => ipcRenderer.on('progresso-conversao', (_event, percentual) => callback(percentual)),
-  abrirNoExplorador: (caminho) => ipcRenderer.send('abrir-no-explorador', caminho)
+  abrirNoExplorador: (caminho) => ipcRenderer.send('abrir-no-explorador', caminho),
+  copiarCaminho: (caminho) => ipcRenderer.send('copiar-caminho', caminho),
+  arrastarArquivo: (caminho) => ipcRenderer.send('arrastar-arquivo', caminho)
 });

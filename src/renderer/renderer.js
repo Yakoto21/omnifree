@@ -28,12 +28,15 @@ const resultPanel = document.getElementById('result-panel');
 const resultIcon = document.getElementById('result-icon');
 const resultMessage = document.getElementById('result-message');
 const btnAbrir = document.getElementById('btn-abrir');
+const btnCopiarCaminho = document.getElementById('btn-copiar-caminho');
+const btnArrastarResultado = document.getElementById('btn-arrastar-resultado');
 const preset = document.getElementById('preset');
 const btnSalvarPerfil = document.getElementById('btn-salvar-perfil');
 const btnConfiguracoes = document.getElementById('btn-configuracoes');
 const settingsDialog = document.getElementById('settings-dialog');
 const btnFecharConfiguracoes = document.getElementById('btn-fechar-configuracoes');
 const btnSalvarConfiguracoes = document.getElementById('btn-salvar-configuracoes');
+const btnThumbnail = document.getElementById('btn-thumbnail');
 const btnDestinoPadrao = document.getElementById('btn-destino-padrao');
 const autoUpdates = document.getElementById('auto-updates');
 const settingsTheme = document.getElementById('settings-theme');
@@ -208,6 +211,7 @@ btnExtrairImagens.addEventListener('click', async () => {
 });
 btnWebPdf.addEventListener('click', async () => { try { const url = window.prompt('Cole o endereço da página (https://…):'); if (!url) return; ultimoArquivoConvertido = await window.conversorAPI.paginaWebParaPdf(url, pastaDestino || pastaDestinoPadrao); btnAbrir.hidden = false; mostrarResultado('success', 'Página salva como PDF.'); } catch (error) { mostrarResultado('error', error.message); } });
 btnLegendas.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); const format = window.prompt('Formato da legenda: srt, vtt ou ass', 'srt'); if (!format) return; ultimoArquivoConvertido = await window.conversorAPI.extrairLegendas(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, ['srt', 'vtt', 'ass'].includes(format.toLowerCase()) ? format.toLowerCase() : 'srt'); btnAbrir.hidden = false; mostrarResultado('success', 'Legenda extraída com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
+btnThumbnail.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); ultimoArquivoConvertido = await window.conversorAPI.gerarThumbnail(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, window.prompt('Instante da capa', '00:00:01') || '00:00:01'); btnAbrir.hidden = false; btnCopiarCaminho.hidden = false; btnArrastarResultado.hidden = false; mostrarResultado('success', 'Thumbnail gerada.'); } catch (error) { mostrarResultado('error', error.message); } });
 btnOcr.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione uma imagem ou PDF primeiro.'); const result = await window.conversorAPI.ocrArquivo(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, 'por+eng'); ultimoArquivoConvertido = result.output; btnAbrir.hidden = false; mostrarResultado('success', `Texto extraído: ${result.text.slice(0, 120) || 'sem texto reconhecido'}`); } catch (error) { mostrarResultado('error', error.message); } });
 btnLerCodigo.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione uma imagem ou PDF primeiro.'); const result = await window.conversorAPI.lerCodigo(arquivoSelecionado.path); mostrarResultado('success', `Código lido: ${result.text}`); } catch (error) { mostrarResultado('error', error.message); } });
 
@@ -379,7 +383,11 @@ window.conversorAPI.receberStatus((dados) => {
   btnConverter.disabled = !arquivoSelecionado;
   if (dados.status === 'concluido') {
     progressBar.style.width = '100%'; progressText.textContent = '100%'; progressState.textContent = 'Conversão concluída';
-    ultimoArquivoConvertido = dados.caminhoArquivo; mostrarResultado('success', dados.mensagem); btnAbrir.hidden = false;
+    ultimoArquivoConvertido = dados.caminhoArquivo; mostrarResultado('success', dados.mensagem); btnAbrir.hidden = false; btnCopiarCaminho.hidden = false; btnArrastarResultado.hidden = false;
   } else if (dados.status === 'erro') { progressContainer.hidden = true; mostrarResultado('error', dados.mensagem); }
 });
 btnAbrir.addEventListener('click', () => { if (ultimoArquivoConvertido) window.conversorAPI.abrirNoExplorador(ultimoArquivoConvertido); });
+btnCopiarCaminho.addEventListener('click', () => { if (ultimoArquivoConvertido) window.conversorAPI.copiarCaminho(ultimoArquivoConvertido); });
+btnArrastarResultado.addEventListener('dragstart', () => { if (ultimoArquivoConvertido) window.conversorAPI.arrastarArquivo(ultimoArquivoConvertido); });
+document.addEventListener('keydown', (event) => { if (event.ctrlKey && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.click(); } if (event.ctrlKey && event.key === 'Enter' && !btnConverter.disabled) btnConverter.click(); });
+window.addEventListener('beforeunload', () => { if (localStorage.getItem('omnifree-privacy-mode') === 'true') localStorage.removeItem('omnifree-history'); });
