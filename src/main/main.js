@@ -26,7 +26,7 @@ const media = createMediaService({ ffmpeg, outputDir });
 const recognition = createRecognitionService({ sharp, run, runOutput, commandAvailable, outputDir });
 const conversion = createConversionService({ sharp, ffmpeg, run });
 
-function createWindow() { const win = new BrowserWindow({ width: 1200, height: 800, minWidth: 900, minHeight: 600, backgroundColor: '#0a0e1a', webPreferences: { preload: path.join(__dirname, '../preload/preload.js'), nodeIntegration: false, contextIsolation: true } }); win.setMenu(null); win.loadFile(path.join(__dirname, '../renderer/index.html')); mainWindow = win; }
+function createWindow() { const win = new BrowserWindow({ width: 1200, height: 800, minWidth: 900, minHeight: 600, icon: path.join(__dirname, '../../build/omnifree-icon.ico'), backgroundColor: '#0a0e1a', webPreferences: { preload: path.join(__dirname, '../preload/preload.js'), nodeIntegration: false, contextIsolation: true } }); win.setMenu(null); win.loadFile(path.join(__dirname, '../renderer/index.html')); mainWindow = win; }
 
 ipcMain.handle('opcoes-conversao', (_event, filePath) => optionsFor(filePath));
 ipcMain.handle('escolher-pasta-destino', async () => { const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] }); return result.canceled ? null : result.filePaths[0]; });

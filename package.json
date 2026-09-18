@@ -1,6 +1,6 @@
 {
   "name": "meu-conversor",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Conversor local de arquivos OmniFree.",
   "main": "src/main/main.js",
   "scripts": {
@@ -41,7 +41,7 @@
     ],
     "win": {
       "target": "nsis",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,

@@ -44,12 +44,15 @@ test('interpreta intervalos de páginas sem aceitar valores inválidos', () => {
 });
 
 test('interface, preload e processo principal mantêm os canais essenciais', () => {
-  const root = path.join(__dirname, '..'); const renderer = fs.readFileSync(path.join(root, 'src/renderer/renderer.js'), 'utf8'); const markup = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8'); const preload = fs.readFileSync(path.join(root, 'src/preload/preload.js'), 'utf8'); const main = fs.readFileSync(path.join(root, 'src/main/main.js'), 'utf8');
+  const root = path.join(__dirname, '..'); const renderer = fs.readFileSync(path.join(root, 'src/renderer/renderer.js'), 'utf8'); const markup = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8'); const preload = fs.readFileSync(path.join(root, 'src/preload/preload.js'), 'utf8'); const main = fs.readFileSync(path.join(root, 'src/main/main.js'), 'utf8'); const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   ['verificarAtualizacoes', 'baixarAtualizacao', 'instalarAtualizacao', 'cancelarConversao'].forEach((name) => assert.match(preload, new RegExp(name)));
   ['verificar-atualizacoes', 'baixar-atualizacao', 'instalar-atualizacao', 'cancelar-conversao'].forEach((channel) => assert.match(main, new RegExp(channel)));
   ['btnVerificarAtualizacoes', 'btnBaixarAtualizacao', 'btnInstalarAtualizacao', 'btnCancelar'].forEach((name) => assert.match(renderer, new RegExp(name)));
   assert.doesNotMatch(renderer, /window\.(prompt|alert)/);
   assert.match(renderer, /solicitarTexto/);
   assert.match(renderer, /setTitle\('\.workspace-heading h1'/);
+  ['Preview', 'Conversion queue', 'Open folder', 'Clear history', 'Settings'].forEach((label) => assert.match(renderer, new RegExp(label)));
   ['input-dialog', 'input-form', 'input-dialog-value'].forEach((id) => assert.match(markup, new RegExp(`id="${id}"`)));
+  assert.equal(manifest.build.win.signAndEditExecutable, true);
+  assert.match(main, /icon: path\.join\(__dirname, '..\/..\/build\/omnifree-icon\.ico'\)/);
 });
