@@ -52,7 +52,8 @@ test('interface, preload e processo principal mantêm os canais essenciais', () 
   assert.match(renderer, /solicitarTexto/);
   assert.match(renderer, /setTitle\('\.workspace-heading h1'/);
   ['Preview', 'Conversion queue', 'Open folder', 'Clear history', 'Settings'].forEach((label) => assert.match(renderer, new RegExp(label)));
-  ['input-dialog', 'input-form', 'input-dialog-value'].forEach((id) => assert.match(markup, new RegExp(`id="${id}"`)));
+  ['input-dialog', 'input-form', 'input-dialog-value', 'saved-profiles-list', 'rules-list', 'rule-history-list'].forEach((id) => assert.match(markup, new RegExp(`id="${id}"`)));
+  ['dragstart', 'retryOnlyFiles', 'queueProgress', 'renderSavedProfiles', 'renderRules'].forEach((feature) => assert.match(renderer, new RegExp(feature)));
   assert.equal(manifest.build.win.signAndEditExecutable, true);
   assert.match(main, /icon: path\.join\(__dirname, '..\/..\/build\/omnifree-icon\.ico'\)/);
 });

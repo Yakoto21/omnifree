@@ -173,3 +173,30 @@ body:not(.light) .local-status{border-color:#476454;color:#8dc79d}
 .input-dialog-body input { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #aaa49a; background: #fffdfa; color: #1e252b; font: inherit; }
 .input-dialog-body > div { display: flex; justify-content: end; gap: 8px; }
 body:not(.light) .input-dialog-body input { border-color: #4b5155; background: #17191b; color: #f1efe9; }
+
+.queue-item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px; border-top: 1px solid #d5d1c8; cursor: grab; }
+.queue-item.dragging { opacity: .45; }
+.queue-item.drag-over { border-top: 2px solid #ef5937; }
+.queue-item .queue-copy { display: grid; gap: 3px; min-width: 0; }
+.queue-item .queue-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-item small { color: #77756e; }
+.queue-item .queue-actions { display: flex; gap: 4px; }
+.queue-item .queue-actions button { min-width: 28px; }
+.queue-item .queue-progress { grid-column: 2 / -1; height: 3px; background: #ddd8cf; }
+.queue-item .queue-progress > span { display: block; height: 100%; background: #ef5937; transition: width .2s ease; }
+.queue-item.error { border-left: 3px solid #bf3c31; }
+.queue-item.done { border-left: 3px solid #398564; }
+.queue-item.processing { border-left: 3px solid #e29b36; }
+.manager-section { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid #d5d1c8; }
+.manager-section > div:first-child { display: grid; gap: 3px; }
+.manager-section span,.rule-history { color: #77756e; font-size: 11px; }
+.manager-list,.rule-history { display: grid; gap: 6px; }
+.manager-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid #d5d1c8; }
+.manager-row > div { display: grid; gap: 2px; min-width: 0; }
+.manager-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manager-row > span { display: flex; gap: 5px; }
+.rule-history { max-height: 110px; overflow: auto; }
+.rule-history p { margin: 0; padding: 6px 0; border-top: 1px solid #e0ddd5; }
+body:not(.light) .queue-item,body:not(.light) .manager-section,body:not(.light) .manager-row,body:not(.light) .rule-history p { border-color: #464a4d; }
+body:not(.light) .queue-item small,body:not(.light) .manager-section span,body:not(.light) .rule-history { color: #a8aca6; }
+body:not(.light) .queue-item .queue-progress { background: #404447; }
