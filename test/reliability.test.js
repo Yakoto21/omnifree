@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { isNewerVersion, updateErrorMessage, createUpdateService } = require('../src/main/update-service');
 const { conversionErrorMessage } = require('../src/main/error-messages');
+const { parsePages } = require('../src/main/pdf-service');
 
 test('compara versões de atualização sem aceitar downgrade', () => {
   assert.equal(isNewerVersion('1.0.8', '1.0.7'), true);
@@ -36,9 +37,19 @@ test('erros comuns de conversão têm orientação para a pessoa usuária', () =
   assert.match(conversionErrorMessage(new Error('ENOSPC')), /espaço/i);
 });
 
+test('interpreta intervalos de páginas sem aceitar valores inválidos', () => {
+  assert.deepEqual(parsePages('1, 3-5', 6), [0, 2, 3, 4]);
+  assert.deepEqual(parsePages('2-1, 2', 4), [1]);
+  assert.deepEqual(parsePages('8', 2), []);
+});
+
 test('interface, preload e processo principal mantêm os canais essenciais', () => {
-  const root = path.join(__dirname, '..'); const renderer = fs.readFileSync(path.join(root, 'src/renderer/renderer.js'), 'utf8'); const preload = fs.readFileSync(path.join(root, 'src/preload/preload.js'), 'utf8'); const main = fs.readFileSync(path.join(root, 'src/main/main.js'), 'utf8');
+  const root = path.join(__dirname, '..'); const renderer = fs.readFileSync(path.join(root, 'src/renderer/renderer.js'), 'utf8'); const markup = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8'); const preload = fs.readFileSync(path.join(root, 'src/preload/preload.js'), 'utf8'); const main = fs.readFileSync(path.join(root, 'src/main/main.js'), 'utf8');
   ['verificarAtualizacoes', 'baixarAtualizacao', 'instalarAtualizacao', 'cancelarConversao'].forEach((name) => assert.match(preload, new RegExp(name)));
   ['verificar-atualizacoes', 'baixar-atualizacao', 'instalar-atualizacao', 'cancelar-conversao'].forEach((channel) => assert.match(main, new RegExp(channel)));
   ['btnVerificarAtualizacoes', 'btnBaixarAtualizacao', 'btnInstalarAtualizacao', 'btnCancelar'].forEach((name) => assert.match(renderer, new RegExp(name)));
+  assert.doesNotMatch(renderer, /window\.(prompt|alert)/);
+  assert.match(renderer, /solicitarTexto/);
+  assert.match(renderer, /setTitle\('\.workspace-heading h1'/);
+  ['input-dialog', 'input-form', 'input-dialog-value'].forEach((id) => assert.match(markup, new RegExp(`id="${id}"`)));
 });

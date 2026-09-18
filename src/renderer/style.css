@@ -167,3 +167,9 @@ body:not(.light) .local-status{border-color:#476454;color:#8dc79d}
   .pdf-tools { grid-template-columns: 1fr; }
   .pdf-tools > div:last-child { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.input-dialog { width: min(460px, calc(100% - 32px)); }
+.input-dialog-body { display: grid; gap: 16px; padding: 20px; }
+.input-dialog-body input { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #aaa49a; background: #fffdfa; color: #1e252b; font: inherit; }
+.input-dialog-body > div { display: flex; justify-content: end; gap: 8px; }
+body:not(.light) .input-dialog-body input { border-color: #4b5155; background: #17191b; color: #f1efe9; }

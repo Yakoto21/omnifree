@@ -100,6 +100,14 @@ const btnVerHistorico = document.getElementById('btn-ver-historico');
 const historyDialog = document.getElementById('history-dialog');
 const historyDialogItems = document.getElementById('history-dialog-items');
 const btnFecharHistorico = document.getElementById('btn-fechar-historico');
+const inputDialog = document.getElementById('input-dialog');
+const inputForm = document.getElementById('input-form');
+const inputDialogTitle = document.getElementById('input-dialog-title');
+const inputDialogMessage = document.getElementById('input-dialog-message');
+const inputDialogValue = document.getElementById('input-dialog-value');
+const btnConfirmarInput = document.getElementById('btn-confirmar-input');
+const btnCancelarInput = document.getElementById('btn-cancelar-input');
+const btnCancelarInputSecundario = document.getElementById('btn-cancelar-input-secundario');
 
 let arquivoSelecionado = null;
 let ultimoArquivoConvertido = '';
@@ -123,6 +131,35 @@ const translations = {
   en: { subtitle: 'Convert files on your computer, privately.', local: '● 100% local', choose: 'Choose a file', chooseHint: 'Drag it here or select it from your computer.', drop: 'Drag a file or folder here', browse: 'or click to browse', folder: 'Folder', change: 'Change', formatTitle: 'Choose the format', formatHint: 'Choose a file to see available formats.', convert: 'Convert file', outputName: 'Output name', preset: 'Preset', balanced: 'Balanced', small: 'Smaller file', highQuality: 'Higher quality', whatsapp: 'Share on WhatsApp', quality: 'Quality', destination: 'Destination', desktop: 'Desktop', more: 'File-specific adjustments', width: 'Width (image)', height: 'Height (image)', crop: 'Crop to fill', cropArea: 'Crop area', batchSizes: 'Extra batch sizes', watermark: 'Watermark (image)', watermarkImage: 'Image watermark', chooseImage: 'Choose image', start: 'Media start', duration: 'Media duration', audioOnly: 'Extract audio only', noAudio: 'Remove audio', metadata: 'Remove metadata', recent: 'Recent conversions', viewAll: 'View all', clear: 'Clear', updates: 'Updates', updatesHint: 'Check whether a newer OmniFree version is available.', checkUpdates: 'Check now', historyTitle: 'Full history', historyHint: 'Open, repeat, or remove a conversion.', tipIdle: 'Start by choosing a file or folder.', tipImage: 'Image detected: choose a format and convert. Image adjustments are available below.', tipMedia: 'Media detected: choose a format. In adjustments, you can trim, extract, or remove audio.', tipPdf: 'PDF detected: convert it normally or use the PDF-specific tools below.', tipGeneric: 'Choose an output format and click Convert file.' }
 };
 function t(key) { return (translations[language.value] || translations['pt-BR'])[key] || key; }
+
+function solicitarTexto({ title, message = '', value = '', placeholder = '', type = 'text', confirmLabel } = {}) {
+  return new Promise((resolve) => {
+    inputDialogTitle.textContent = title || (language.value === 'en' ? 'Information' : 'Informação');
+    inputDialogMessage.textContent = message;
+    inputDialogValue.type = type;
+    inputDialogValue.value = value;
+    inputDialogValue.placeholder = placeholder;
+    btnConfirmarInput.textContent = confirmLabel || (language.value === 'en' ? 'Confirm' : 'Confirmar');
+    btnCancelarInputSecundario.textContent = language.value === 'en' ? 'Cancel' : 'Cancelar';
+    const finish = (answer = null) => {
+      inputForm.removeEventListener('submit', submit);
+      btnCancelarInput.removeEventListener('click', cancel);
+      btnCancelarInputSecundario.removeEventListener('click', cancel);
+      inputDialog.removeEventListener('cancel', cancel);
+      if (inputDialog.open) inputDialog.close();
+      resolve(answer);
+    };
+    const submit = (event) => { event.preventDefault(); finish(inputDialogValue.value.trim()); };
+    const cancel = (event) => { if (event) event.preventDefault(); finish(); };
+    inputForm.addEventListener('submit', submit);
+    btnCancelarInput.addEventListener('click', cancel);
+    btnCancelarInputSecundario.addEventListener('click', cancel);
+    inputDialog.addEventListener('cancel', cancel);
+    inputDialog.showModal();
+    inputDialogValue.focus();
+    inputDialogValue.select();
+  });
+}
 
 function atualizarHistorico() {
   const history = JSON.parse(localStorage.getItem('omnifree-history') || '[]');
@@ -169,7 +206,8 @@ const staticCopy = {
 };
 function applyStaticCopy(locale) {
   const copy = staticCopy[locale] || staticCopy['pt-BR']; const set = (selector, value) => { const element = document.querySelector(selector); if (element) element.textContent = value; };
-  set('.topbar-context', copy.topbar); set('.workflow-rail > span', copy.flow); set('.rail-step:nth-of-type(1) strong', copy.add); set('.rail-step:nth-of-type(1) small', copy.addHint); set('.rail-step:nth-of-type(2) strong', copy.prepare); set('.rail-step:nth-of-type(2) small', copy.prepareHint); set('.rail-step:nth-of-type(3) strong', copy.export); set('.rail-step:nth-of-type(3) small', copy.exportHint); set('.workflow-rail p', `${copy.privacy}\n${copy.privacyHint}`); set('.workspace-heading > span', copy.newConversion); set('.workspace-heading h1', copy.title); set('.desk-card header span', copy.activity); set('.desk-card > strong', copy.recent); set('.side-desk details:nth-of-type(1) summary', copy.quick); set('.side-desk details:nth-of-type(2) summary', copy.rename); set('.side-desk details:nth-of-type(3) summary', copy.app);
+  const setTitle = (selector, value) => { const element = document.querySelector(selector); if (element) element.innerHTML = value.split('\n').join('<br>'); };
+  set('.topbar-context', copy.topbar); set('.workflow-rail > span', copy.flow); set('.rail-step:nth-of-type(1) strong', copy.add); set('.rail-step:nth-of-type(1) small', copy.addHint); set('.rail-step:nth-of-type(2) strong', copy.prepare); set('.rail-step:nth-of-type(2) small', copy.prepareHint); set('.rail-step:nth-of-type(3) strong', copy.export); set('.rail-step:nth-of-type(3) small', copy.exportHint); set('.workflow-rail p', `${copy.privacy}\n${copy.privacyHint}`); set('.workspace-heading > span', copy.newConversion); setTitle('.workspace-heading h1', copy.title); set('.desk-card header span', copy.activity); set('.desk-card > strong', copy.recent); set('.side-desk details:nth-of-type(1) summary', copy.quick); set('.side-desk details:nth-of-type(2) summary', copy.rename); set('.side-desk details:nth-of-type(3) summary', copy.app);
   const labelText = locale === 'en' ? ['SEARCH', 'CATEGORY', 'CONVERT TO'] : ['BUSCAR', 'CATEGORIA', 'CONVERTER PARA'];
   document.querySelectorAll('.format-controls label').forEach((label, index) => { const textNode = [...label.childNodes].find((node) => node.nodeType === Node.TEXT_NODE); if (textNode) textNode.nodeValue = labelText[index] || ''; });
   const tools = [['#btn-web-pdf', copy.web, copy.webHint], ['#btn-legendas', copy.captions, copy.captionsHint], ['#btn-thumbnail', copy.thumbnail, copy.thumbnailHint], ['#btn-ocr', copy.ocr, copy.ocrHint], ['#btn-ler-codigo', copy.codes, copy.codesHint]];
@@ -188,13 +226,13 @@ preset.addEventListener('change', () => {
   if (selected.target && [...formatoSaida.options].some((option) => option.value === selected.target)) formatoSaida.value = selected.target;
   atualizarQualidade();
 });
-btnSalvarPerfil.addEventListener('click', () => { const name = window.prompt('Nome para salvar este perfil:'); if (!name) return; const id = `saved-${Date.now()}`; localStorage.setItem(`omnifree-profile-${id}`, JSON.stringify({ quality: quality.value, width: width.value, height: height.value, target: formatoSaida.value })); const option = new Option(name.trim(), id); preset.add(option); preset.value = id; });
+btnSalvarPerfil.addEventListener('click', async () => { const name = await solicitarTexto({ title: language.value === 'en' ? 'Save conversion profile' : 'Salvar perfil de conversão', message: language.value === 'en' ? 'Give this configuration a memorable name.' : 'Dê um nome para identificar esta configuração.', placeholder: language.value === 'en' ? 'Example: My Instagram' : 'Exemplo: Meu Instagram' }); if (!name) return; const id = `saved-${Date.now()}`; localStorage.setItem(`omnifree-profile-${id}`, JSON.stringify({ quality: quality.value, width: width.value, height: height.value, target: formatoSaida.value })); const option = new Option(name.trim(), id); preset.add(option); preset.value = id; });
 btnDestino.addEventListener('click', async () => {
   const pasta = await window.conversorAPI.escolherPastaDestino();
   if (pasta) { pastaDestino = pasta; btnDestino.textContent = 'Pasta escolhida'; }
 });
 btnConfiguracoes.addEventListener('click', async () => { pastaDestinoPadrao = localStorage.getItem('omnifree-default-output') || ''; btnDestinoPadrao.textContent = pastaDestinoPadrao ? 'Pasta escolhida' : 'Área de Trabalho'; settingsTheme.value = document.body.classList.contains('light') ? 'light' : 'dark'; settingsLanguage.value = language.value; const preferences = await window.conversorAPI.obterPreferencias(); autoUpdates.checked = preferences.autoUpdates !== false; regrasAutomaticas = await window.conversorAPI.obterRegras(); rulesStatus.textContent = regrasAutomaticas.length ? `${regrasAutomaticas.length} regra(s) ativa(s)` : 'Nenhuma regra automática'; settingsDialog.showModal(); });
-btnAdicionarRegra.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (!folder) return; const outputDir = await window.conversorAPI.escolherPastaDestino(); if (!outputDir || outputDir === folder) return window.alert('Escolha uma pasta de saída diferente.'); const target = window.prompt('Formato automático: mp3, pdf ou webp', 'webp'); if (!['mp3', 'pdf', 'webp'].includes((target || '').toLowerCase())) return; regrasAutomaticas.push({ folder, outputDir, target: target.toLowerCase() }); rulesStatus.textContent = `${regrasAutomaticas.length} regra(s) ativa(s)`; });
+btnAdicionarRegra.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (!folder) return; const outputDir = await window.conversorAPI.escolherPastaDestino(); if (!outputDir || outputDir === folder) { mostrarResultado('error', language.value === 'en' ? 'Choose a different output folder.' : 'Escolha uma pasta de saída diferente.'); return; } const target = await solicitarTexto({ title: language.value === 'en' ? 'Automatic format' : 'Formato automático', message: language.value === 'en' ? 'Use mp3, pdf, or webp.' : 'Use mp3, pdf ou webp.', value: 'webp' }); if (!['mp3', 'pdf', 'webp'].includes((target || '').toLowerCase())) return; regrasAutomaticas.push({ folder, outputDir, target: target.toLowerCase() }); rulesStatus.textContent = `${regrasAutomaticas.length} regra(s) ativa(s)`; });
 btnFecharConfiguracoes.addEventListener('click', () => settingsDialog.close());
 btnDestinoPadrao.addEventListener('click', async () => { const folder = await window.conversorAPI.escolherPastaDestino(); if (folder) { pastaDestinoPadrao = folder; btnDestinoPadrao.textContent = 'Pasta escolhida'; } });
 btnSalvarConfiguracoes.addEventListener('click', async () => { localStorage.setItem('omnifree-default-output', pastaDestinoPadrao); document.body.classList.toggle('light', settingsTheme.value === 'light'); document.body.dataset.theme = settingsTheme.value; localStorage.setItem('omnifree-theme', settingsTheme.value); updateThemeButton(); language.value = settingsLanguage.value; localStorage.setItem('omnifree-language', language.value); applyLanguage(); await window.conversorAPI.salvarPreferencias({ autoUpdates: autoUpdates.checked }); await window.conversorAPI.salvarRegras(regrasAutomaticas); settingsDialog.close(); });
@@ -253,7 +291,7 @@ btnSepararPdf.addEventListener('click', async () => {
     ultimoArquivoConvertido = files[0]; btnAbrir.hidden = false; mostrarResultado('success', `${files.length} página(s) foram separadas.`);
   } catch (error) { mostrarResultado('error', error.message); }
 });
-btnExtrairPaginas.addEventListener('click', async () => { try { const pages = window.prompt('Quais páginas? Exemplo: 1, 3-5'); if (!pages) return; ultimoArquivoConvertido = await window.conversorAPI.extrairPaginasPdf(pdfSelecionado(), pastaDestino || pastaDestinoPadrao, pages); btnAbrir.hidden = false; mostrarResultado('success', 'Páginas extraídas com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
+btnExtrairPaginas.addEventListener('click', async () => { try { const pages = await solicitarTexto({ title: language.value === 'en' ? 'Extract PDF pages' : 'Extrair páginas do PDF', message: language.value === 'en' ? 'Example: 1, 3-5' : 'Exemplo: 1, 3-5', placeholder: '1, 3-5' }); if (!pages) return; ultimoArquivoConvertido = await window.conversorAPI.extrairPaginasPdf(pdfSelecionado(), pastaDestino || pastaDestinoPadrao, pages); btnAbrir.hidden = false; mostrarResultado('success', 'Páginas extraídas com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
 btnGirarPdf.addEventListener('click', async () => {
   try {
     if (!arquivoSelecionado || !arquivoSelecionado.name.toLowerCase().endsWith('.pdf')) throw new Error('Selecione um PDF primeiro.');
@@ -266,19 +304,19 @@ function pdfSelecionado() {
 }
 btnProtegerPdf.addEventListener('click', async () => {
   try {
-    const password = window.prompt('Defina uma senha para abrir o PDF:'); if (!password) return;
+    const password = await solicitarTexto({ title: language.value === 'en' ? 'Protect PDF' : 'Proteger PDF', message: language.value === 'en' ? 'Set the password required to open this PDF.' : 'Defina a senha necessária para abrir este PDF.', type: 'password' }); if (!password) return;
     ultimoArquivoConvertido = await window.conversorAPI.protegerPdf(pdfSelecionado(), pastaDestino, password); btnAbrir.hidden = false; mostrarResultado('success', 'PDF protegido com senha.');
   } catch (error) { mostrarResultado('error', error.message); }
 });
 btnOtimizarPdf.addEventListener('click', async () => {
-  try { const selected = window.prompt('Compactação: menor, equilibrado ou qualidade', 'equilibrado'); if (!selected) return; const mode = selected.toLowerCase().startsWith('men') ? 'small' : selected.toLowerCase().startsWith('qual') ? 'quality' : 'balanced'; ultimoArquivoConvertido = await window.conversorAPI.otimizarPdf(pdfSelecionado(), pastaDestino || pastaDestinoPadrao, mode); btnAbrir.hidden = false; mostrarResultado('success', 'PDF compactado.'); } catch (error) { mostrarResultado('error', error.message); }
+  try { const selected = await solicitarTexto({ title: language.value === 'en' ? 'Compress PDF' : 'Compactar PDF', message: language.value === 'en' ? 'Type: smaller, balanced, or quality.' : 'Digite: menor, equilibrado ou qualidade.', value: language.value === 'en' ? 'balanced' : 'equilibrado' }); if (!selected) return; const mode = selected.toLowerCase().startsWith('men') || selected.toLowerCase().startsWith('small') ? 'small' : selected.toLowerCase().startsWith('qual') ? 'quality' : 'balanced'; ultimoArquivoConvertido = await window.conversorAPI.otimizarPdf(pdfSelecionado(), pastaDestino || pastaDestinoPadrao, mode); btnAbrir.hidden = false; mostrarResultado('success', 'PDF compactado.'); } catch (error) { mostrarResultado('error', error.message); }
 });
 btnExtrairImagens.addEventListener('click', async () => {
   try { const folder = await window.conversorAPI.extrairImagensPdf(pdfSelecionado(), pastaDestino); ultimoArquivoConvertido = folder; btnAbrir.hidden = false; mostrarResultado('success', 'Imagens extraídas para uma nova pasta.'); } catch (error) { mostrarResultado('error', error.message); }
 });
-btnWebPdf.addEventListener('click', async () => { try { const url = window.prompt('Cole o endereço da página (https://…):'); if (!url) return; ultimoArquivoConvertido = await window.conversorAPI.paginaWebParaPdf(url, pastaDestino || pastaDestinoPadrao); btnAbrir.hidden = false; mostrarResultado('success', 'Página salva como PDF.'); } catch (error) { mostrarResultado('error', error.message); } });
-btnLegendas.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); const format = window.prompt('Formato da legenda: srt, vtt ou ass', 'srt'); if (!format) return; ultimoArquivoConvertido = await window.conversorAPI.extrairLegendas(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, ['srt', 'vtt', 'ass'].includes(format.toLowerCase()) ? format.toLowerCase() : 'srt'); btnAbrir.hidden = false; mostrarResultado('success', 'Legenda extraída com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
-btnThumbnail.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); ultimoArquivoConvertido = await window.conversorAPI.gerarThumbnail(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, window.prompt('Instante da capa', '00:00:01') || '00:00:01'); btnAbrir.hidden = false; btnCopiarCaminho.hidden = false; btnArrastarResultado.hidden = false; mostrarResultado('success', 'Thumbnail gerada.'); } catch (error) { mostrarResultado('error', error.message); } });
+btnWebPdf.addEventListener('click', async () => { try { const url = await solicitarTexto({ title: language.value === 'en' ? 'Web page to PDF' : 'Página web para PDF', message: language.value === 'en' ? 'Paste a complete address beginning with https://.' : 'Cole um endereço completo começando com https://.', placeholder: 'https://' }); if (!url) return; ultimoArquivoConvertido = await window.conversorAPI.paginaWebParaPdf(url, pastaDestino || pastaDestinoPadrao); btnAbrir.hidden = false; mostrarResultado('success', 'Página salva como PDF.'); } catch (error) { mostrarResultado('error', error.message); } });
+btnLegendas.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); const format = await solicitarTexto({ title: language.value === 'en' ? 'Extract captions' : 'Extrair legendas', message: language.value === 'en' ? 'Choose srt, vtt, or ass.' : 'Escolha srt, vtt ou ass.', value: 'srt' }); if (!format) return; ultimoArquivoConvertido = await window.conversorAPI.extrairLegendas(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, ['srt', 'vtt', 'ass'].includes(format.toLowerCase()) ? format.toLowerCase() : 'srt'); btnAbrir.hidden = false; mostrarResultado('success', 'Legenda extraída com sucesso.'); } catch (error) { mostrarResultado('error', error.message); } });
+btnThumbnail.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione um vídeo primeiro.'); const time = await solicitarTexto({ title: language.value === 'en' ? 'Generate thumbnail' : 'Gerar thumbnail', message: language.value === 'en' ? 'Choose the moment for the cover.' : 'Escolha o instante para a capa.', value: '00:00:01', placeholder: '00:00:01' }); if (!time) return; ultimoArquivoConvertido = await window.conversorAPI.gerarThumbnail(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, time); btnAbrir.hidden = false; btnCopiarCaminho.hidden = false; btnArrastarResultado.hidden = false; mostrarResultado('success', 'Thumbnail gerada.'); } catch (error) { mostrarResultado('error', error.message); } });
 btnOcr.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione uma imagem ou PDF primeiro.'); const result = await window.conversorAPI.ocrArquivo(arquivoSelecionado.path, pastaDestino || pastaDestinoPadrao, 'por+eng'); ultimoArquivoConvertido = result.output; btnAbrir.hidden = false; mostrarResultado('success', `Texto extraído: ${result.text.slice(0, 120) || 'sem texto reconhecido'}`); } catch (error) { mostrarResultado('error', error.message); } });
 btnLerCodigo.addEventListener('click', async () => { try { if (!arquivoSelecionado) throw new Error('Selecione uma imagem ou PDF primeiro.'); const result = await window.conversorAPI.lerCodigo(arquivoSelecionado.path); mostrarResultado('success', `Código lido: ${result.text}`); } catch (error) { mostrarResultado('error', error.message); } });
 

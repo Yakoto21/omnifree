@@ -7,6 +7,9 @@ const path = require('node:path');
 const sharp = require('sharp');
 const ffmpegPath = require('ffmpeg-static');
 const { PDFDocument } = require('pdf-lib');
+const { configureOptionalToolPath } = require('../src/main/system-tools');
+
+configureOptionalToolPath();
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
