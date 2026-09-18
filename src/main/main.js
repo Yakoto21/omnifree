@@ -12,6 +12,8 @@ const { PDFDocument, degrees } = require('pdf-lib');
 const { findGroup, optionsFor, extensionOf } = require('./conversion-catalog');
 const { convertData } = require('./data-converter');
 const { uniqueOutputPath } = require('./output-paths');
+const { createUpdateService } = require('./update-service');
+const { conversionErrorMessage } = require('./error-messages');
 const { MultiFormatReader, BinaryBitmap, HybridBinarizer, RGBLuminanceSource } = require('@zxing/library');
 
 const ghostscriptFolders = (() => { try { return fsSync.readdirSync('C:\\Program Files\\gs', { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join('C:\\Program Files\\gs', entry.name, 'bin')); } catch { return []; } })();
@@ -22,32 +24,10 @@ const optionalToolFolders = [
 process.env.PATH = `${optionalToolFolders.join(path.delimiter)}${path.delimiter}${process.env.PATH}`;
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = false;
-let updateAvailable = false;
-let updateDownloaded = false;
-function updateErrorMessage(error) {
-  const message = String(error?.message || '');
-  if (/404|not found/i.test(message)) return 'Ainda não existe uma atualização publicada no GitHub.';
-  if (/401|403|authentication|authorization/i.test(message)) return 'O GitHub recusou a consulta de atualizações. Tente novamente mais tarde.';
-  return 'Não foi possível verificar atualizações. Confira sua conexão e tente novamente.';
-}
-function isNewerVersion(candidate, current) {
-  const parse = (version) => String(version).replace(/^v/i, '').split('-')[0].split('.').map((part) => Number(part) || 0);
-  const candidateParts = parse(candidate); const currentParts = parse(current);
-  for (let index = 0; index < Math.max(candidateParts.length, currentParts.length); index += 1) {
-    const difference = (candidateParts[index] || 0) - (currentParts[index] || 0);
-    if (difference !== 0) return difference > 0;
-  }
-  return false;
-}
-function sendUpdateStatus(payload) { mainWindow?.webContents.send('status-atualizacao', payload); }
-autoUpdater.on('download-progress', (progress) => sendUpdateStatus({ status: 'downloading', percent: Math.round(progress.percent || 0) }));
-autoUpdater.on('update-downloaded', (info) => { updateDownloaded = true; sendUpdateStatus({ status: 'downloaded', version: info.version }); });
-autoUpdater.on('error', (error) => sendUpdateStatus({ status: 'error', message: updateErrorMessage(error) }));
 const activeConversions = new Map();
 const ruleWatchers = new Map();
 let mainWindow;
+const updateService = createUpdateService({ updater: autoUpdater, getVersion: () => app.getVersion(), isPackaged: () => app.isPackaged, sendStatus: (payload) => mainWindow?.webContents.send('status-atualizacao', payload) });
 const preferencesFile = () => path.join(app.getPath('userData'), 'omnifree-preferences.json');
 async function readPreferences() { try { return JSON.parse(await fs.readFile(preferencesFile(), 'utf8')); } catch { return { autoUpdates: true, rules: [] }; } }
 async function writePreferences(preferences) { await fs.writeFile(preferencesFile(), JSON.stringify(preferences), 'utf8'); }
@@ -152,24 +132,9 @@ function parsePages(value, count) {
   }
   return [...pages].sort((a, b) => a - b);
 }
-ipcMain.handle('verificar-atualizacoes', async () => {
-  if (!app.isPackaged) return { status: 'development', message: 'A verificação de atualizações funciona na versão instalada do OmniFree.' };
-  try {
-    updateAvailable = false; updateDownloaded = false;
-    const result = await autoUpdater.checkForUpdates();
-    const latest = result?.updateInfo?.version;
-    if (latest && isNewerVersion(latest, app.getVersion())) { updateAvailable = true; return { status: 'available', version: latest, message: `A versão ${latest} está disponível no GitHub.` }; }
-    return { status: 'latest', message: `Você já está usando a versão mais recente (${app.getVersion()}).` };
-  } catch (error) {
-    return { status: 'error', message: updateErrorMessage(error) };
-  }
-});
-ipcMain.handle('baixar-atualizacao', async () => {
-  if (!app.isPackaged) return { status: 'development', message: 'Instale o OmniFree para atualizar pelo GitHub.' };
-  if (!updateAvailable) return { status: 'none', message: 'Nenhuma atualização disponível para baixar.' };
-  try { await autoUpdater.downloadUpdate(); return { status: updateDownloaded ? 'downloaded' : 'downloading' }; } catch (error) { return { status: 'error', message: updateErrorMessage(error) }; }
-});
-ipcMain.handle('instalar-atualizacao', () => { if (!updateDownloaded) return { status: 'none' }; autoUpdater.quitAndInstall(); return { status: 'installing' }; });
+ipcMain.handle('verificar-atualizacoes', () => updateService.check());
+ipcMain.handle('baixar-atualizacao', () => updateService.download());
+ipcMain.handle('instalar-atualizacao', () => updateService.install());
 ipcMain.handle('obter-preferencias', readPreferences);
 ipcMain.handle('salvar-preferencias', async (_event, preferences) => { await writePreferences({ autoUpdates: preferences?.autoUpdates !== false }); return readPreferences(); });
 function configureRules(rules = []) {
@@ -291,8 +256,7 @@ ipcMain.on('processar-arquivo', async (event, input, target, settings = {}, jobI
   } catch (error) {
     console.error(error);
     if (error.message === 'CONVERSAO_CANCELADA') { await fs.rm(output || '', { force: true }).catch(() => {}); send(event, { status: 'cancelado', mensagem: 'Conversão cancelada.', jobId }); return; }
-    const missing = error.message.includes('não foi encontrado');
-    send(event, { status: 'erro', mensagem: missing ? `${error.message} Instale o componente correspondente e tente novamente.` : `Não foi possível converter este arquivo: ${error.message}`, jobId });
+    send(event, { status: 'erro', mensagem: conversionErrorMessage(error), jobId });
   } finally {
     if (jobId) activeConversions.delete(jobId);
   }
