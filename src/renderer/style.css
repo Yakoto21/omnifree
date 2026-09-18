@@ -63,7 +63,7 @@ hr{border:0;border-top:1px solid #cac6bd;margin:30px 0}
 .control-drawer{margin-top:12px;border-top:1px solid #d3cfc6}
 .control-drawer summary,.desk-card summary{padding:14px 0;font-size:12px;font-weight:800;cursor:pointer;list-style:none}
 .control-drawer summary:after,.desk-card summary:after{float:right;content:"+";color:#e7502c}
-.control-drawer[open] summary:after,.desk-card[open] summary:after{content:"âˆ’"}
+.control-drawer[open] summary:after,.desk-card[open] summary:after{content:"-"}
 .advanced-panel{display:grid;grid-template-columns:1fr 1.2fr 1fr 1fr;gap:12px;padding-bottom:14px}
 .advanced-grid,.rename-tools{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-bottom:14px}
 .check-line{display:flex!important;align-items:center;gap:7px}

@@ -56,4 +56,7 @@ test('interface, preload e processo principal mantêm os canais essenciais', () 
   ['dragstart', 'retryOnlyFiles', 'queueProgress', 'renderSavedProfiles', 'renderRules'].forEach((feature) => assert.match(renderer, new RegExp(feature)));
   assert.equal(manifest.build.win.signAndEditExecutable, true);
   assert.match(main, /icon: path\.join\(__dirname, '..\/..\/build\/omnifree-icon\.ico'\)/);
+  const style = fs.readFileSync(path.join(root, 'src/renderer/style.css'), 'utf8');
+  assert.doesNotMatch(style, /âˆ’/);
+  assert.match(style, /\[open\] summary:after[^\n]*content:"-"/);
 });
