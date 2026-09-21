@@ -7,7 +7,7 @@ const sharp = require('sharp');
 const { autoUpdater } = require('electron-updater');
 const { PDFDocument, degrees } = require('pdf-lib');
 const { optionsFor, extensionOf } = require('./conversion-catalog');
-const { configureOptionalToolPath, run, runOutput, commandAvailable, componentStatus } = require('./system-tools');
+const { configureOptionalToolPath, run, runOutput, commandAvailable, componentDetails } = require('./system-tools');
 const { createUpdateService } = require('./update-service');
 const { createPreferencesService } = require('./preferences-service');
 const { createPdfService } = require('./pdf-service');
@@ -31,7 +31,7 @@ function createWindow() { const win = new BrowserWindow({ width: 1200, height: 8
 ipcMain.handle('opcoes-conversao', (_event, filePath) => optionsFor(filePath));
 ipcMain.handle('escolher-pasta-destino', async () => { const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] }); return result.canceled ? null : result.filePaths[0]; });
 ipcMain.handle('escolher-imagem-marca-dagua', async () => { const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Imagem', extensions: ['png', 'jpg', 'jpeg', 'webp', 'avif'] }] }); return result.canceled ? null : result.filePaths[0]; });
-ipcMain.handle('componentes-disponiveis', () => componentStatus(ffmpegStatic));
+ipcMain.handle('componentes-disponiveis', () => componentDetails(ffmpegStatic));
 ipcMain.handle('detalhes-arquivo', async (_event, filePath) => { const stat = await fs.stat(filePath); const details = { bytes: stat.size }; const extension = extensionOf(filePath); if (['png', 'jpg', 'jpeg', 'webp', 'avif', 'tif', 'tiff', 'bmp'].includes(extension)) { const meta = await sharp(filePath).metadata(); details.width = meta.width; details.height = meta.height; } if (extension === 'pdf') { const document = await PDFDocument.load(await fs.readFile(filePath)); details.pages = document.getPageCount(); } return details; });
 ipcMain.handle('ler-codigo', (_event, input) => recognition.readCode(input));
 ipcMain.handle('ocr-arquivo', (_event, input, folder, language) => recognition.ocr(input, folder, language));

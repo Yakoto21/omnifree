@@ -7,9 +7,15 @@ const path = require('node:path');
 const sharp = require('sharp');
 const ffmpegPath = require('ffmpeg-static');
 const { PDFDocument } = require('pdf-lib');
-const { configureOptionalToolPath } = require('../src/main/system-tools');
+const { bundledRoot, bundledToolFolders, configureOptionalToolPath } = require('../src/main/system-tools');
 
 configureOptionalToolPath();
+
+test('prepara caminhos para motores internos da edição completa', () => {
+  const folders = bundledToolFolders(bundledRoot());
+  assert.ok(folders.some((folder) => folder.endsWith(path.join('engines', 'qpdf'))));
+  assert.ok(folders.some((folder) => folder.endsWith(path.join('engines', 'poppler', 'bin'))));
+});
 
 function run(command, args) {
   return new Promise((resolve, reject) => {

@@ -284,12 +284,13 @@ window.conversorAPI.receberArquivoRegra(async (rule) => { const options = await 
 btnWatermarkImage.addEventListener('click', async () => { const selected = await window.conversorAPI.escolherImagemMarcaDagua(); if (selected) { watermarkImage = selected; watermarkImageName.textContent = selected.split(/[\\/]/).pop(); } });
 cropGrid.addEventListener('click', (event) => { const button = event.target.closest('button[data-position]'); if (!button) return; cropPosition = button.dataset.position; cropGrid.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); });
 async function atualizarComponentes() {
-  const components = await window.conversorAPI.obterComponentes();
+  const report = await window.conversorAPI.obterComponentes(); const components = report.components || report; const origins = report.origins || {};
   const active = Object.values(components).filter(Boolean).length;
   componentsStatus.textContent = `${active}/${Object.keys(components).length} componentes prontos`;
   const commands = { LibreOffice: 'Instale LibreOffice.', Pandoc: 'Instale Pandoc.', '7-Zip': 'Instale 7-Zip.', Calibre: 'Instale Calibre.', QPDF: 'choco install qpdf -y', Poppler: 'choco install poppler -y' };
   const missing = Object.keys(components).filter((name) => !components[name] && commands[name]);
-  componentsHelp.textContent = missing.length ? `Faltam: ${missing.join(', ')}. ${missing.map((name) => commands[name]).join(' ')}` : 'Todos os componentes opcionais estão prontos.';
+  const bundled = Object.entries(origins).filter(([, source]) => source === 'bundled').map(([name]) => name);
+  componentsHelp.textContent = missing.length ? `Faltam: ${missing.join(', ')}. ${missing.map((name) => commands[name]).join(' ')}` : `Todos os componentes opcionais estão prontos.${bundled.length ? ` Internos: ${bundled.join(', ')}.` : ''}`;
 }
 btnComponentes.addEventListener('click', atualizarComponentes);
 atualizarComponentes();

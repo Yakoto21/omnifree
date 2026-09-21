@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "edition": "complete-ready",
+  "description": "Motores portáteis opcionais para o OmniFree. O aplicativo usa esta pasta antes de consultar instalações do Windows.",
+  "engines": {
+    "7zip": "7zip/7z.exe",
+    "calibre": "calibre/ebook-convert.exe",
+    "libreoffice": "libreoffice/program/soffice.exe",
+    "tesseract": "tesseract/tesseract.exe",
+    "qpdf": "qpdf/qpdf.exe",
+    "poppler": "poppler/bin/pdfimages.exe e poppler/bin/pdftoppm.exe",
+    "ghostscript": "ghostscript/bin/gswin64c.exe",
+    "pandoc": "pandoc/pandoc.exe"
+  }
+}

@@ -2,13 +2,34 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, execFile } = require('child_process');
 
+function bundledRoot() { return process.resourcesPath ? path.join(process.resourcesPath, 'engines') : path.resolve(__dirname, '../../engines'); }
+function bundledToolFolders(root = bundledRoot()) {
+  return [
+    path.join(root, '7zip'),
+    path.join(root, 'calibre'),
+    path.join(root, 'libreoffice', 'program'),
+    path.join(root, 'tesseract'),
+    path.join(root, 'qpdf'),
+    path.join(root, 'poppler', 'bin'),
+    path.join(root, 'ghostscript', 'bin'),
+    path.join(root, 'pandoc')
+  ];
+}
+function existingFolders(folders) { return folders.filter((folder) => fs.existsSync(folder)); }
 function configureOptionalToolPath() {
   const ghostscriptFolders = (() => { try { return fs.readdirSync('C:\\Program Files\\gs', { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join('C:\\Program Files\\gs', entry.name, 'bin')); } catch { return []; } })();
-  const folders = ['C:\\Program Files\\7-Zip', 'C:\\Program Files\\Calibre2', 'C:\\Program Files\\LibreOffice\\program', 'C:\\Program Files\\Tesseract-OCR', ...ghostscriptFolders];
+  const folders = [...bundledToolFolders(), 'C:\\Program Files\\7-Zip', 'C:\\Program Files\\Calibre2', 'C:\\Program Files\\LibreOffice\\program', 'C:\\Program Files\\Tesseract-OCR', ...ghostscriptFolders];
   process.env.PATH = `${folders.join(path.delimiter)}${path.delimiter}${process.env.PATH}`;
 }
 function run(command, args) { return new Promise((resolve, reject) => { const child = spawn(command, args, { windowsHide: true }); let error = ''; child.stderr.on('data', (chunk) => { error += chunk; }); child.on('error', () => reject(new Error(`O programa necessário “${command}” não foi encontrado.`))); child.on('close', (code) => code === 0 ? resolve() : reject(new Error(error || `${command} terminou com erro.`))); }); }
 function runOutput(command, args) { return new Promise((resolve, reject) => { const child = spawn(command, args, { windowsHide: true }); let output = ''; let error = ''; child.stdout.on('data', (chunk) => { output += chunk; }); child.stderr.on('data', (chunk) => { error += chunk; }); child.on('error', () => reject(new Error(`O programa necessário “${command}” não foi encontrado.`))); child.on('close', (code) => code === 0 ? resolve(output) : reject(new Error(error || `${command} terminou com erro.`))); }); }
-function commandAvailable(command) { return new Promise((resolve) => execFile('where.exe', [command], { windowsHide: true }, (error) => resolve(!error))); }
+function commandLocation(command) { return new Promise((resolve) => execFile('where.exe', [command], { windowsHide: true }, (error, stdout) => resolve(error ? '' : String(stdout).split(/\r?\n/).find(Boolean) || ''))); }
+async function commandAvailable(command) { return Boolean(await commandLocation(command)); }
 async function componentStatus(ffmpegAvailable) { return { LibreOffice: await commandAvailable('soffice'), Pandoc: await commandAvailable('pandoc'), '7-Zip': await commandAvailable('7z'), Calibre: await commandAvailable('ebook-convert'), QPDF: await commandAvailable('qpdf'), Poppler: await commandAvailable('pdfimages'), Ghostscript: await commandAvailable('gswin64c'), Tesseract: await commandAvailable('tesseract'), FFmpeg: Boolean(ffmpegAvailable), Sharp: true }; }
-module.exports = { configureOptionalToolPath, run, runOutput, commandAvailable, componentStatus };
+async function componentDetails(ffmpegAvailable) {
+  const commands = { LibreOffice: 'soffice', Pandoc: 'pandoc', '7-Zip': '7z', Calibre: 'ebook-convert', QPDF: 'qpdf', Poppler: 'pdfimages', Ghostscript: 'gswin64c', Tesseract: 'tesseract' }; const root = path.resolve(bundledRoot()).toLowerCase(); const components = {}; const origins = {};
+  for (const [name, command] of Object.entries(commands)) { const location = await commandLocation(command); components[name] = Boolean(location); origins[name] = !location ? 'missing' : path.resolve(location).toLowerCase().startsWith(root) ? 'bundled' : 'system'; }
+  components.FFmpeg = Boolean(ffmpegAvailable); components.Sharp = true; origins.FFmpeg = 'bundled'; origins.Sharp = 'bundled';
+  return { components, origins, bundledRoot: root };
+}
+module.exports = { bundledRoot, bundledToolFolders, configureOptionalToolPath, run, runOutput, commandLocation, commandAvailable, componentStatus, componentDetails };

@@ -1,12 +1,13 @@
 {
   "name": "meu-conversor",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Conversor local de arquivos OmniFree.",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win",
     "build:manual": "npm run icon && electron-builder --win --publish never",
+    "build:complete": "npm run icon && electron-builder --win --publish never",
     "icon": "node scripts/create-icon.js",
     "test": "node --test"
   },
@@ -32,6 +33,15 @@
     "productName": "OmniFree",
     "artifactName": "OmniFree-Setup-${version}.${ext}",
     "icon": "build/omnifree-icon.ico",
+    "extraResources": [
+      {
+        "from": "engines",
+        "to": "engines",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "publish": [
       {
         "provider": "github",
