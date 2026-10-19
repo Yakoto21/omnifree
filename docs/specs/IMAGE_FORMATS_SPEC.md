@@ -118,4 +118,100 @@ O motor rejeita deliberadamente variantes não implementadas, emitindo exceçõe
 - **Dimensão Máxima por Eixo:** 16.384 pixels.
 - **Contagem Máxima de Pixels:** 64 Megapixels (~256 MB em buffer RGBA).
 - **Tamanho Máximo de Arquivo de Imagem:** 250 MB.
+- **Tamanho Máximo por Chunk PNG:** 64 MB (proteção contra ataques DoS de alocação de chunks gigantes).
 - **Proteção contra sobrescrita:** `SafeFileWriter` com sufixo incremental determinístico `(1)`, `(2)`, etc.
+
+---
+
+## 6. Especificação Técnica do Motor PNG (`image-png`)
+
+**Módulo:** `src/core/formats/image/png/`  
+**Status:** Implementado, Auditado e Testado  
+**Identificador do Motor:** `image-png`  
+**Normas de Referência:** ISO/IEC 15948:2004 / W3C PNG 1.2, RFC 1950 (ZLIB), RFC 1951 (DEFLATE).
+
+### 6.1 Perfil Suportado e Conformidade
+1. **Assinatura e Validação:**
+   - Assinatura mágica obrigatória de 8 bytes: `0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A` (`\x89PNG\r\n\x1a\n`).
+2. **Perfis de Cor Alvo (8 bits por canal):**
+   - **Truecolor RGB (ColorType 2):** 3 canais de 8 bits (24 bpp). Totalmente opaco ($A=255$).
+   - **Truecolor RGBA (ColorType 6):** 4 canais de 8 bits (32 bpp). Canal alfa contínuo $[0, 255]$ preservado com exatidão.
+3. **Não-Entrelaçado:** Apenas imagens de varredura linear convencional (`InterlaceMethod = 0`). Adam7 é rejeitado estritamente com `UnsupportedFormatException`.
+
+### 6.2 Integridade e Algoritmos de Checksum
+- **CRC-32 (ISO 3309 / ITU-T V.42):**
+  - Polinômio padrão `0xEDB88320` (representação invertida de $x^{32} + x^{26} + x^{23} + \dots$).
+  - Tabela pré-computada de 256 entradas de 32 bits.
+  - Calculado sobre o tipo do chunk (4 bytes) concatenado com os dados do chunk.
+- **Adler-32 (RFC 1950):**
+  - Checksum aritmético de 32 bits composto por duas somas módulo 65521:
+    $$s_1 = \left( 1 + \sum_{i=1}^{n} D_i \right) \bmod 65521, \quad s_2 = \left( n + \sum_{i=1}^{n} (n - i + 1) D_i \right) \bmod 65521$$
+    $$\text{Adler32} = (s_2 \ll 16) \mid s_1$$
+  - Acumulação por blocos de até 5552 bytes sem overflow de 32 bits antes da redução modular.
+
+### 6.3 Descompressão e Compressão DEFLATE / ZLIB Próprias
+1. **Camada ZLIB (RFC 1950):**
+   - Validação estrita do cabeçalho de 2 bytes:
+     - `CMF`: Método de compressão deve ser DEFLATE (`CM = 8`), tamanho da janela $\le 32$ KB (`CINFO <= 7`).
+     - `FLG`: Verificação `(CMF * 256 + FLG) % 31 == 0` (FCHECK). Dicionários predefinidos (`FDICT != 0`) são rejeitados conforme a norma PNG.
+   - Verificação do checksum Adler-32 de 4 bytes no final do fluxo após a descompressão de todos os blocos.
+2. **Descompressão DEFLATE (RFC 1951):**
+   - Leitor de bits LSB-first com buffer de 64 bits e alinhamento de bytes para blocos armazenados.
+   - **Blocos Não Comprimidos / Armazenados (BTYPE 00):** Validação de `NLEN == ~LEN` e cópia direta para a saída e histórico circular de 32 KB.
+   - **Blocos com Huffman Fixo (BTYPE 01):** Árvore estática pré-computada conforme RFC 1951 § 3.2.6 (literais 0..143 de 8 bits, 144..255 de 9 bits, 256..279 de 7 bits, 280..287 de 8 bits; distâncias 0..31 de 5 bits).
+   - **Blocos com Huffman Dinâmico (BTYPE 10):**
+     - Leitura de `HLIT` (257..286), `HDIST` (1..32) e `HCLEN` (4..19).
+     - Árvore de comprimentos de código gerada a partir da ordem de permutação canônica de 19 símbolos (`16, 17, 18, 0, 8, 7, ...`).
+     - Decodificação dos comprimentos de literais e distâncias com suporte aos códigos de repetição 16 (3..6 vezes), 17 (3..10 zeros) e 18 (11..138 zeros).
+     - Construção canônica de árvores binárias para literais e distâncias.
+     - Decodificação LZ77 com janela deslizante de 32 KB e tabelas completas de bits extras de comprimento (códigos 257..285) e distância (códigos 0..29).
+3. **Compressão ZLIB / DEFLATE Proprietária:**
+   - Emissão de cabeçalho ZLIB padronizado (`CMF = 0x78`, `FLG = 0x01`).
+   - Fragmentação em blocos DEFLATE não comprimidos (BTYPE 00) de até 65.535 bytes com `LEN` e `NLEN`.
+   - Cálculo e escrita do checksum Adler-32 Big-Endian no encerramento do fluxo.
+
+### 6.4 Filtros de Scanline (Reconstrução e Codificação)
+A especificação PNG define 5 filtros aplicados scanline a scanline sobre bytes prévios:
+
+| Tipo | Nome | Fórmula de Defiltragem (Decodificação) | Fórmula de Filtragem (Codificação) |
+|---|---|---|---|
+| 0 | **None** | $\text{Recon}(x) = \text{Filt}(x)$ | $\text{Filt}(x) = \text{Orig}(x)$ |
+| 1 | **Sub** | $\text{Recon}(x) = \text{Filt}(x) + \text{Recon}(x - bpp)$ | $\text{Filt}(x) = \text{Orig}(x) - \text{Orig}(x - bpp)$ |
+| 2 | **Up** | $\text{Recon}(x) = \text{Filt}(x) + \text{Prior}(x)$ | $\text{Filt}(x) = \text{Orig}(x) - \text{Prior}(x)$ |
+| 3 | **Average** | $\text{Recon}(x) = \text{Filt}(x) + \lfloor (\text{Recon}(x - bpp) + \text{Prior}(x)) / 2 \rfloor$ | $\text{Filt}(x) = \text{Orig}(x) - \lfloor (\text{Orig}(x - bpp) + \text{Prior}(x)) / 2 \rfloor$ |
+| 4 | **Paeth** | $\text{Recon}(x) = \text{Filt}(x) + \text{PaethPredictor}(a, b, c)$ | $\text{Filt}(x) = \text{Orig}(x) - \text{PaethPredictor}(a, b, c)$ |
+
+- O preditor de Paeth calcula $p = a + b - c$ e seleciona o vizinho mais próximo de $p$ com desempate determinístico em $a$, depois $b$, depois $c$.
+- Todas as operações aritméticas são calculadas em módulo 256 sem overflow de tipo.
+
+### 6.5 Ciclo de Vida de Chunks e Fragmentação de IDAT
+- **`IHDR`:** Obrigatoriamente o primeiro chunk após a assinatura de 8 bytes. Define largura, altura, profundidade de bits, tipo de cor, compressão (0), filtro (0) e entrelaçamento (0).
+- **Múltiplos Chunks `IDAT` Consecutivos:** A norma PNG permite que o fluxo ZLIB comprimido seja fatiado em múltiplos blocos `IDAT`. O `PngDecoder` acumula continuamente os dados de todos os chunks `IDAT` consecutivos até o encerramento do fluxo, validando que nenhum chunk `IDAT` surja após outros chunks intermediários.
+- **`IEND`:** Chunk final de terminação com 0 bytes de dados (`CRC = 0xAE426082`).
+- **Chunks Críticos vs. Auxiliares:** Qualquer chunk desconhecido com a primeira letra maiúscula (crítico) é rejeitado com `UnsupportedFormatException`. Chunks auxiliares (primeira letra minúscula) são ignorados de forma segura.
+
+### 6.6 Política de Rejeição e Segurança do Motor PNG
+
+| Cenário / Variante | Indicador / Causa | Exceção Lançada |
+|---|---|---|
+| Assinatura PNG Inválida | Primeiros 8 bytes $\ne$ `89 50 4E 47 0D 0A 1A 0A` | `CorruptDataException` |
+| Arquivo Truncado | Fim inesperado do stream durante cabeçalho ou chunks | `CorruptDataException` |
+| Falha de Integridade CRC-32 | CRC calculado $\ne$ CRC registrado no chunk | `CorruptDataException` |
+| Falha de Integridade Adler-32 | Checksum Adler do ZLIB $\ne$ valor final esperado | `CorruptDataException` |
+| Paleta Indexada | `ColorType = 3` | `UnsupportedFormatException` |
+| Escala de Cinza / Cinza+Alfa | `ColorType = 0` ou `ColorType = 4` | `UnsupportedFormatException` |
+| Profundidade $\ne$ 8 bits | `BitDepth` 1, 2, 4 ou 16 bits | `UnsupportedFormatException` |
+| Entrelaçamento Adam7 | `InterlaceMethod != 0` | `UnsupportedFormatException` |
+| Dimensões Inválidas | Largura $\le 0$ ou Altura $\le 0$ | `CorruptDataException` |
+| Dimensão Excessiva | Largura ou Altura $> 16.384$ px | `ResourceLimitException` |
+| Chunk Gigante (DoS) | Tamanho do chunk $> 64$ MB | `ResourceLimitException` |
+| Chunk Crítico Desconhecido | Tipo FourCC com primeira letra maiúscula não suportado | `UnsupportedFormatException` |
+| Chunk `IHDR` Duplicado | Mais de um chunk `IHDR` no mesmo arquivo | `CorruptDataException` |
+| Ausência de Chunks `IDAT` | Arquivo sem dados de imagem comprimidos | `CorruptDataException` |
+
+### 6.7 Rotas de Conversão e Integração no Registro
+O motor `image-png` integra-se ao `EngineRegistry`, habilitando:
+1. `png -> png`: Re-filtragem, compressão, recorte, redimensionamento (nearest/bilinear) e marcas d'água de texto/imagem.
+2. `bmp -> png`: Conversão nativa de bitmaps Windows (24-bit e 32-bit BGRX) para PNG Truecolor com suporte a marcas d'água.
+3. `png -> bmp`: Conversão de PNG Truecolor (RGB e RGBA) para BMP não comprimido de 24 bits ou 32 bits com fidelidade visual completa.
+

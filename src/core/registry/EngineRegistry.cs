@@ -4,6 +4,7 @@ using Lodino.Core.Api;
 using Lodino.Core.Errors;
 using Lodino.Core.Formats.Data;
 using Lodino.Core.Formats.Image;
+using Lodino.Core.Formats.Image.Png;
 
 namespace Lodino.Core.Registry
 {
@@ -14,6 +15,7 @@ namespace Lodino.Core.Registry
             var registry = new EngineRegistry();
             registry.Register(new StructuredDataEngine());
             registry.Register(new BmpEngine());
+            registry.Register(new PngEngine());
             return registry;
         });
 

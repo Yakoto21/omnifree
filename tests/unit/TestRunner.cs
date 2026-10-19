@@ -5,6 +5,7 @@ using Lodino.Core.Api;
 using Lodino.Core.Errors;
 using Lodino.Core.Formats.Data;
 using Lodino.Core.Formats.Image;
+using Lodino.Core.Formats.Image.Png;
 using Lodino.Core.IO;
 using Lodino.Core.Registry;
 using Lodino.Core.Safety;
@@ -124,6 +125,27 @@ namespace Lodino.Tests
             RunTest("BMP (Engine): Inspeção de metadados via BmpEngine.Inspect", Test_Bmp_Engine_Inspect);
             RunTest("BMP (Engine): Pipeline completo de conversão e transformações via BmpEngine", Test_Bmp_Engine_ConvertPipeline);
             RunTest("REGISTRY: Resolução dinâmica do motor image-bmp para bmp -> bmp", Test_Bmp_Registry_Resolution);
+
+            // =================================================
+            //   LODINO NATIVE CORE — MOTOR PILOTO 3            
+            //   Módulo: Motor Nativo de Imagens PNG Próprio    
+            // =================================================
+
+            RunTest("PNG (Checksum): Validação de vetores CRC-32 (ISO 3309)", Test_Png_Checksum_Crc32_Vectors);
+            RunTest("PNG (Checksum): Validação de vetores Adler-32 (RFC 1950)", Test_Png_Checksum_Adler32_Vectors);
+            RunTest("PNG (DEFLATE): Blocos não comprimidos (Stored BTYPE 00) e integridade NLEN", Test_Png_Deflate_StoredBlocks_SingleAndMulti);
+            RunTest("PNG (DEFLATE): Descompressão com árvores de Huffman fixas (BTYPE 01)", Test_Png_Deflate_FixedHuffman_Decompression);
+            RunTest("PNG (DEFLATE): Descompressão com árvores de Huffman dinâmicas (BTYPE 10)", Test_Png_Deflate_DynamicHuffman_Decompression);
+            RunTest("PNG (Filtros): Reversibilidade e fidelidade dos 5 filtros (None, Sub, Up, Average, Paeth)", Test_Png_Filters_All5_RoundTrip);
+            RunTest("PNG (Fixture Independente): 24-bit Truecolor RGB (ColorType 2) montado byte a byte", Test_Png_Independent_Raw_Rgb24_Fixture);
+            RunTest("PNG (Fixture Independente): 32-bit Truecolor RGBA (ColorType 6) com preservação de alfa", Test_Png_Independent_Raw_Rgba32_Fixture);
+            RunTest("PNG (IDAT Múltiplo): Descompressão de fluxo ZLIB fragmentado em múltiplos chunks", Test_Png_Multiple_Idat_Chunks);
+            RunTest("PNG (Round-Trip): Fidelidade exata de codificação e decodificação RGB e RGBA", Test_Png_RoundTrip_Rgb_And_Rgba);
+            RunTest("PNG (Encoder): Round-trip com seleção explícita dos 5 filtros de linha", Test_Png_Encoder_All5_Filters);
+            RunTest("PNG (Segurança): Rejeição estrita de variantes não suportadas e dados corrompidos", Test_Png_Security_StrictRejections);
+            RunTest("PNG (Engine): Inspeção completa de cabeçalho e metadados via PngEngine.Inspect", Test_Png_Engine_Inspect);
+            RunTest("PNG (Engine): Pipeline completo de transformações (crop, resize, watermark)", Test_Png_Engine_Convert_Transforms);
+            RunTest("PNG (Rotas Bidirecionais): Conversão PNG <-> BMP e resolução no EngineRegistry", Test_Png_Engine_Bidirectional_Bmp_Png);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -1299,6 +1321,741 @@ namespace Lodino.Tests
             bool threwNegW = false;
             try { BmpDecoder.Decode(bmp); } catch (CorruptDataException) { threwNegW = true; }
             Assert(threwNegW, "Rejeita biWidth negativo");
+        }
+
+        #endregion
+
+        #region Motor PNG (Testes e Fixtures Independentes)
+
+        #region Helpers de Fixtures PNG Independentes
+
+        private class SimpleBitWriter
+        {
+            private readonly MemoryStream _ms = new MemoryStream();
+            private int _bitBuffer = 0;
+            private int _bitCount = 0;
+
+            public void WriteBits(int value, int count)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    int bit = (value >> i) & 1;
+                    _bitBuffer |= (bit << _bitCount);
+                    _bitCount++;
+                    if (_bitCount == 8)
+                    {
+                        _ms.WriteByte((byte)_bitBuffer);
+                        _bitBuffer = 0;
+                        _bitCount = 0;
+                    }
+                }
+            }
+
+            public void WriteHuffman(int code, int bitLength)
+            {
+                for (int i = bitLength - 1; i >= 0; i--)
+                {
+                    int bit = (code >> i) & 1;
+                    WriteBits(bit, 1);
+                }
+            }
+
+            public byte[] ToArray()
+            {
+                if (_bitCount > 0)
+                {
+                    _ms.WriteByte((byte)_bitBuffer);
+                }
+                return _ms.ToArray();
+            }
+        }
+
+        private static byte[] CreateRawPng(int width, int height, bool hasAlpha, byte[] rawFilteredScanlines)
+        {
+            using (var ms = new MemoryStream())
+            {
+                // 1. Assinatura PNG de 8 bytes
+                ms.Write(PngHeader.PngSignature, 0, 8);
+
+                // 2. Chunk IHDR (13 bytes)
+                byte[] ihdrData = new byte[13];
+                ihdrData[0] = (byte)((width >> 24) & 0xFF);
+                ihdrData[1] = (byte)((width >> 16) & 0xFF);
+                ihdrData[2] = (byte)((width >> 8) & 0xFF);
+                ihdrData[3] = (byte)(width & 0xFF);
+
+                ihdrData[4] = (byte)((height >> 24) & 0xFF);
+                ihdrData[5] = (byte)((height >> 16) & 0xFF);
+                ihdrData[6] = (byte)((height >> 8) & 0xFF);
+                ihdrData[7] = (byte)(height & 0xFF);
+
+                ihdrData[8] = 8; // Bit depth: 8
+                ihdrData[9] = hasAlpha ? (byte)6 : (byte)2; // ColorType: 6 (RGBA) ou 2 (RGB)
+                ihdrData[10] = 0; // Compressão: DEFLATE
+                ihdrData[11] = 0; // Filtro: adaptativo
+                ihdrData[12] = 0; // Interlace: nenhum
+                WriteRawChunk(ms, "IHDR", ihdrData);
+
+                // 3. Chunk IDAT (Fluxo ZLIB com bloco DEFLATE armazenado e checksum Adler-32)
+                using (var zlibMs = new MemoryStream())
+                {
+                    zlibMs.WriteByte(0x78); // CMF
+                    zlibMs.WriteByte(0x01); // FLG (check = 0x7801 = múltiplo de 31)
+
+                    // Bloco DEFLATE armazenado (BFINAL = 1, BTYPE = 00)
+                    zlibMs.WriteByte(0x01);
+                    ushort len = (ushort)rawFilteredScanlines.Length;
+                    ushort nlen = (ushort)(~len);
+                    zlibMs.WriteByte((byte)(len & 0xFF));
+                    zlibMs.WriteByte((byte)((len >> 8) & 0xFF));
+                    zlibMs.WriteByte((byte)(nlen & 0xFF));
+                    zlibMs.WriteByte((byte)((nlen >> 8) & 0xFF));
+                    zlibMs.Write(rawFilteredScanlines, 0, rawFilteredScanlines.Length);
+
+                    // Checksum Adler-32 no final
+                    uint adler = Adler32.Calculate(rawFilteredScanlines, 0, rawFilteredScanlines.Length);
+                    zlibMs.WriteByte((byte)((adler >> 24) & 0xFF));
+                    zlibMs.WriteByte((byte)((adler >> 16) & 0xFF));
+                    zlibMs.WriteByte((byte)((adler >> 8) & 0xFF));
+                    zlibMs.WriteByte((byte)(adler & 0xFF));
+
+                    byte[] zlibBytes = zlibMs.ToArray();
+                    WriteRawChunk(ms, "IDAT", zlibBytes);
+                }
+
+                // 4. Chunk IEND
+                WriteRawChunk(ms, "IEND", new byte[0]);
+
+                return ms.ToArray();
+            }
+        }
+
+        private static void WriteRawChunk(Stream stream, string type, byte[] data)
+        {
+            int len = data != null ? data.Length : 0;
+            stream.WriteByte((byte)((len >> 24) & 0xFF));
+            stream.WriteByte((byte)((len >> 16) & 0xFF));
+            stream.WriteByte((byte)((len >> 8) & 0xFF));
+            stream.WriteByte((byte)(len & 0xFF));
+
+            byte[] typeBytes = Encoding.ASCII.GetBytes(type);
+            stream.Write(typeBytes, 0, 4);
+
+            if (len > 0)
+            {
+                stream.Write(data, 0, len);
+            }
+
+            uint crc = PngCrc32.Calculate(type, data, 0, len);
+            stream.WriteByte((byte)((crc >> 24) & 0xFF));
+            stream.WriteByte((byte)((crc >> 16) & 0xFF));
+            stream.WriteByte((byte)((crc >> 8) & 0xFF));
+            stream.WriteByte((byte)(crc & 0xFF));
+        }
+
+        #endregion
+
+        private static void Test_Png_Checksum_Crc32_Vectors()
+        {
+            byte[] empty = new byte[0];
+            Assert(PngCrc32.Calculate(empty, 0, 0) == 0x00000000, "CRC32 de vazio deve ser 0");
+
+            byte[] v1 = Encoding.ASCII.GetBytes("123456789");
+            Assert(PngCrc32.Calculate(v1, 0, v1.Length) == 0xCBF43926, "CRC32 de '123456789' deve ser 0xCBF43926");
+
+            // Chunk IEND com dados vazios
+            Assert(PngCrc32.Calculate("IEND", new byte[0], 0, 0) == 0xAE426082, "CRC32 do chunk 'IEND' deve ser 0xAE426082");
+        }
+
+        private static void Test_Png_Checksum_Adler32_Vectors()
+        {
+            byte[] empty = new byte[0];
+            Assert(Adler32.Calculate(empty, 0, 0) == 1, "Adler32 de vazio deve ser 1");
+
+            byte[] v1 = Encoding.ASCII.GetBytes("123456789");
+            Assert(Adler32.Calculate(v1, 0, v1.Length) == 0x091E01DE, "Adler32 de '123456789' deve ser 0x091E01DE");
+
+            byte[] v2 = Encoding.ASCII.GetBytes("Wikipedia");
+            Assert(Adler32.Calculate(v2, 0, v2.Length) == 0x11E60398, "Adler32 de 'Wikipedia' deve ser 0x11E60398");
+
+            // Detecção de corrupção do Adler-32 em ZlibStream
+            byte[] compressed = ZlibStream.Compress(v1);
+            compressed[compressed.Length - 1] ^= 0xFF; // corrompe último byte do checksum
+            bool threwAdler = false;
+            try { ZlibStream.Decompress(compressed); }
+            catch (CorruptDataException) { threwAdler = true; }
+            Assert(threwAdler, "ZlibStream deve rejeitar fluxo com Adler-32 corrompido");
+        }
+
+        private static void Test_Png_Deflate_StoredBlocks_SingleAndMulti()
+        {
+            byte[] data1 = Encoding.ASCII.GetBytes("Hello, Lodino Proprietary Core! ");
+            byte[] data2 = Encoding.ASCII.GetBytes("Second Stored Block DEFLATE.");
+
+            using (var ms = new MemoryStream())
+            {
+                // Bloco 1 (BFINAL = 0, BTYPE = 00)
+                ms.WriteByte(0x00);
+                ushort len1 = (ushort)data1.Length;
+                ushort nlen1 = (ushort)(~len1);
+                ms.WriteByte((byte)(len1 & 0xFF)); ms.WriteByte((byte)((len1 >> 8) & 0xFF));
+                ms.WriteByte((byte)(nlen1 & 0xFF)); ms.WriteByte((byte)((nlen1 >> 8) & 0xFF));
+                ms.Write(data1, 0, data1.Length);
+
+                // Bloco 2 (BFINAL = 1, BTYPE = 00)
+                ms.WriteByte(0x01);
+                ushort len2 = (ushort)data2.Length;
+                ushort nlen2 = (ushort)(~len2);
+                ms.WriteByte((byte)(len2 & 0xFF)); ms.WriteByte((byte)((len2 >> 8) & 0xFF));
+                ms.WriteByte((byte)(nlen2 & 0xFF)); ms.WriteByte((byte)((nlen2 >> 8) & 0xFF));
+                ms.Write(data2, 0, data2.Length);
+
+                byte[] streamBytes = ms.ToArray();
+                byte[] decompressed = DeflateDecompressor.Decompress(new MemoryStream(streamBytes));
+                string text = Encoding.ASCII.GetString(decompressed);
+                Assert(text == "Hello, Lodino Proprietary Core! Second Stored Block DEFLATE.", "Descompressão multi-bloco stored deve ser exata");
+
+                // Corrompe NLEN
+                streamBytes[3] ^= 0xFF;
+                bool threwNlen = false;
+                try { DeflateDecompressor.Decompress(new MemoryStream(streamBytes)); }
+                catch (CorruptDataException) { threwNlen = true; }
+                Assert(threwNlen, "Deve rejeitar bloco com NLEN corrompido");
+            }
+        }
+
+        private static void Test_Png_Deflate_FixedHuffman_Decompression()
+        {
+            // Bloco de teste DEFLATE com Huffman Fixo (BFINAL = 1, BTYPE = 01)
+            byte[] fixedDeflate = new byte[]
+            {
+                0xF3, 0xF1, 0x77, 0xF1, 0xF4, 0xF3, 0x8F, 0x77, 0x71, 0x75, 0xF3, 0x71, 0x0C, 0x71, 0x8D, 0x77,
+                0x89, 0xF4, 0x73, 0xF4, 0xF5, 0x74, 0x8E, 0x0F, 0x71, 0x0D, 0x0E, 0x89, 0x0F, 0x0E, 0x09, 0xF2,
+                0xF4, 0x73, 0x8F, 0x37, 0x34, 0x32, 0x36, 0x31, 0x05, 0x00
+            };
+
+            byte[] decomp = DeflateDecompressor.Decompress(new MemoryStream(fixedDeflate));
+            string str = Encoding.ASCII.GetString(decomp);
+            Assert(str == "LODINO_DEFLATE_DYNAMIC_TEST_STRING_12345", "Fixed Huffman deve descomprimir string com exatidão");
+        }
+
+        private static void Test_Png_Deflate_DynamicHuffman_Decompression()
+        {
+            // Construção independente de bloco Huffman Dinâmico (BTYPE 10, BFINAL 1)
+            var writer = new SimpleBitWriter();
+
+            // 1. Cabeçalho de bloco: BFINAL=1, BTYPE=10
+            writer.WriteBits(1, 1);
+            writer.WriteBits(2, 2);
+
+            // 2. Dimensões das tabelas dinâmicas
+            int hlitVal = 0;   // hlit = 257 (0 + 257)
+            int hdistVal = 0;  // hdist = 1 (0 + 1)
+            int hclenVal = 14; // hclen = 18 (14 + 4)
+            writer.WriteBits(hlitVal, 5);
+            writer.WriteBits(hdistVal, 5);
+            writer.WriteBits(hclenVal, 4);
+
+            // 3. Tabela de comprimentos de código (18 entradas):
+            // CodeLengthOrder: [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1]
+            // Índice 2 é símbolo 18: comprimento 2
+            // Índice 3 é símbolo 0: comprimento 1
+            // Índice 17 é símbolo 1: comprimento 2
+            for (int i = 0; i < 18; i++)
+            {
+                if (i == 3) writer.WriteBits(1, 3);      // símbolo 0: len 1 (código 1)
+                else if (i == 2) writer.WriteBits(2, 3); // símbolo 18: len 2 (código 00)
+                else if (i == 17) writer.WriteBits(2, 3);// símbolo 1: len 2 (código 01)
+                else writer.WriteBits(0, 3);
+            }
+
+            // 4. Emissão dos 258 comprimentos de código (257 literais + 1 distância)
+            // Símbolo 0 tem len 1 -> código 0 (1 bit: 0)
+            // Símbolo 1 tem len 2 -> código 2 (2 bits: 10)
+            // Símbolo 18 tem len 2 -> código 3 (2 bits: 11)
+            // Símbolos 0..64 (65 símbolos) com comprimento 0: símbolo 18 com repeat 65 (54 nos 7 bits extras)
+            writer.WriteHuffman(3, 2); // símbolo 18 (código 11)
+            writer.WriteBits(54, 7);   // 11 + 54 = 65 repetições
+
+            // Símbolo 65 ('A') com comprimento 1: símbolo 1 (código 10)
+            writer.WriteHuffman(2, 2);
+
+            // Símbolos 66..203 (138 símbolos) com comprimento 0: símbolo 18 com repeat 138 (127 nos 7 bits extras)
+            writer.WriteHuffman(3, 2);
+            writer.WriteBits(127, 7);  // 11 + 127 = 138 repetições
+
+            // Símbolos 204..255 (52 símbolos) com comprimento 0: símbolo 18 com repeat 52 (41 nos 7 bits extras)
+            writer.WriteHuffman(3, 2);
+            writer.WriteBits(41, 7);   // 11 + 41 = 52 repetições
+
+            // Símbolo 256 (EOB) com comprimento 1: símbolo 1 (código 10)
+            writer.WriteHuffman(2, 2);
+
+            // Símbolo de distância 0 com comprimento 1: símbolo 1 (código 10)
+            writer.WriteHuffman(2, 2);
+
+            // Agora a árvore literal tem: 'A' (65) = código 0 (1 bit), EOB (256) = código 1 (1 bit)
+            // Emitimos "AAAA" seguido de EOB
+            writer.WriteBits(0, 1); // 'A'
+            writer.WriteBits(0, 1); // 'A'
+            writer.WriteBits(0, 1); // 'A'
+            writer.WriteBits(0, 1); // 'A'
+            writer.WriteBits(1, 1); // EOB (256)
+
+            byte[] dynamicBlock = writer.ToArray();
+            byte[] decompressed = DeflateDecompressor.Decompress(new MemoryStream(dynamicBlock));
+            string resultStr = Encoding.ASCII.GetString(decompressed);
+            Assert(resultStr == "AAAA", "Dynamic Huffman deve descomprimir string 'AAAA' com fidelidade");
+        }
+
+        private static void Test_Png_Filters_All5_RoundTrip()
+        {
+            byte[] currentRaw = new byte[] { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160 };
+            byte[] priorRaw = new byte[] { 5, 15, 25, 35, 45, 55, 65, 75, 85, 95, 105, 115, 125, 135, 145, 155 };
+
+            for (byte f = 0; f <= 4; f++)
+            {
+                byte[] filtered = new byte[1 + currentRaw.Length];
+                PngFilter.FilterScanline(f, currentRaw, priorRaw, filtered, currentRaw.Length, 4);
+                Assert(filtered[0] == f, "Byte 0 deve registrar o tipo de filtro");
+
+                byte[] reconstructed = new byte[currentRaw.Length];
+                PngFilter.UnfilterScanline(f, filtered, 1, priorRaw, reconstructed, currentRaw.Length, 4);
+
+                for (int i = 0; i < currentRaw.Length; i++)
+                {
+                    Assert(reconstructed[i] == currentRaw[i],
+                        string.Format("Filtro {0}: byte {1} reconstruído (0x{2:X2}) != original (0x{3:X2})",
+                        f, i, reconstructed[i], currentRaw[i]));
+                }
+            }
+        }
+
+        private static void Test_Png_Independent_Raw_Rgb24_Fixture()
+        {
+            // Imagem 2x2 24-bit Truecolor RGB (ColorType 2)
+            // Linha 0 (Filtro 0 = None): Red (255, 0, 0), Green (0, 255, 0)
+            // Linha 1 (Filtro 1 = Sub): Blue (0, 0, 255), White (255, 255, 255)
+            // Filtro Sub na linha 1:
+            //   Pixel 0 (Blue: 0, 0, 255): diff de 0 é (0, 0, 255)
+            //   Pixel 1 (White: 255, 255, 255): diff de Pixel 0 é (255-0=255, 255-0=255, 255-255=0)
+            byte[] scanlines = new byte[]
+            {
+                // Linha 0 (Filtro None = 0)
+                0x00, 255, 0, 0,  0, 255, 0,
+                // Linha 1 (Filtro Sub = 1)
+                0x01, 0, 0, 255,  255, 255, 0
+            };
+
+            byte[] pngBytes = CreateRawPng(2, 2, false, scanlines);
+            PixelBuffer buf = PngDecoder.Decode(pngBytes);
+
+            Assert(buf.Width == 2 && buf.Height == 2, "Dimensões devem ser 2x2");
+            Assert(buf.GetPixel(0, 0).R == 255 && buf.GetPixel(0, 0).G == 0 && buf.GetPixel(0, 0).B == 0 && buf.GetPixel(0, 0).A == 255, "(0,0) deve ser Vermelho opaco");
+            Assert(buf.GetPixel(1, 0).R == 0 && buf.GetPixel(1, 0).G == 255 && buf.GetPixel(1, 0).B == 0 && buf.GetPixel(1, 0).A == 255, "(1,0) deve ser Verde opaco");
+            Assert(buf.GetPixel(0, 1).R == 0 && buf.GetPixel(0, 1).G == 0 && buf.GetPixel(0, 1).B == 255 && buf.GetPixel(0, 1).A == 255, "(0,1) deve ser Azul opaco");
+            Assert(buf.GetPixel(1, 1).R == 255 && buf.GetPixel(1, 1).G == 255 && buf.GetPixel(1, 1).B == 255 && buf.GetPixel(1, 1).A == 255, "(1,1) deve ser Branco opaco");
+        }
+
+        private static void Test_Png_Independent_Raw_Rgba32_Fixture()
+        {
+            // Imagem 2x2 32-bit Truecolor RGBA (ColorType 6)
+            // Linha 0 (Filtro 0 = None): (255, 0, 0, 0), (0, 255, 0, 64)
+            // Linha 1 (Filtro 2 = Up):   (0, 0, 255, 128), (255, 255, 0, 255)
+            // Filtro Up na linha 1: diff de Linha 0:
+            //   Pixel 0: (0-255)=1, (0-0)=0, (255-0)=255, (128-0)=128
+            //   Pixel 1: (255-0)=255, (255-255)=0, (0-0)=0, (255-64)=191
+            byte[] scanlines = new byte[]
+            {
+                // Linha 0 (Filtro None = 0)
+                0x00, 255, 0, 0, 0,  0, 255, 0, 64,
+                // Linha 1 (Filtro Up = 2)
+                0x02, 1, 0, 255, 128,  255, 0, 0, 191
+            };
+
+            byte[] pngBytes = CreateRawPng(2, 2, true, scanlines);
+            PixelBuffer buf = PngDecoder.Decode(pngBytes);
+
+            Assert(buf.Width == 2 && buf.Height == 2, "Dimensões devem ser 2x2");
+            Assert(buf.GetPixel(0, 0).R == 255 && buf.GetPixel(0, 0).A == 0, "(0,0) deve preservar canal Alfa = 0");
+            Assert(buf.GetPixel(1, 0).G == 255 && buf.GetPixel(1, 0).A == 64, "(1,0) deve preservar canal Alfa = 64");
+            Assert(buf.GetPixel(0, 1).B == 255 && buf.GetPixel(0, 1).A == 128, "(0,1) deve preservar canal Alfa = 128");
+            Assert(buf.GetPixel(1, 1).R == 255 && buf.GetPixel(1, 1).G == 255 && buf.GetPixel(1, 1).A == 255, "(1,1) deve preservar canal Alfa = 255");
+        }
+
+        private static void Test_Png_Multiple_Idat_Chunks()
+        {
+            // Gera um PNG onde o fluxo ZLIB é fragmentado em múltiplos chunks IDAT
+            byte[] scanlines = new byte[]
+            {
+                0x00, 10, 20, 30,  40, 50, 60,
+                0x00, 70, 80, 90, 100, 110, 120
+            };
+
+            using (var zlibMs = new MemoryStream())
+            {
+                zlibMs.WriteByte(0x78); zlibMs.WriteByte(0x01);
+                zlibMs.WriteByte(0x01);
+                ushort len = (ushort)scanlines.Length;
+                ushort nlen = (ushort)(~len);
+                zlibMs.WriteByte((byte)(len & 0xFF)); zlibMs.WriteByte((byte)((len >> 8) & 0xFF));
+                zlibMs.WriteByte((byte)(nlen & 0xFF)); zlibMs.WriteByte((byte)((nlen >> 8) & 0xFF));
+                zlibMs.Write(scanlines, 0, scanlines.Length);
+
+                uint adler = Adler32.Calculate(scanlines, 0, scanlines.Length);
+                zlibMs.WriteByte((byte)((adler >> 24) & 0xFF));
+                zlibMs.WriteByte((byte)((adler >> 16) & 0xFF));
+                zlibMs.WriteByte((byte)((adler >> 8) & 0xFF));
+                zlibMs.WriteByte((byte)(adler & 0xFF));
+
+                byte[] zlibBytes = zlibMs.ToArray();
+
+                using (var ms = new MemoryStream())
+                {
+                    ms.Write(PngHeader.PngSignature, 0, 8);
+                    WriteRawChunk(ms, "IHDR", new byte[] { 0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0, 0, 0 });
+
+                    // Divide em 3 chunks IDAT consecutivos
+                    int part1 = 7;
+                    int part2 = 8;
+                    int part3 = zlibBytes.Length - part1 - part2;
+
+                    byte[] c1 = new byte[part1];
+                    Buffer.BlockCopy(zlibBytes, 0, c1, 0, part1);
+                    WriteRawChunk(ms, "IDAT", c1);
+
+                    byte[] c2 = new byte[part2];
+                    Buffer.BlockCopy(zlibBytes, part1, c2, 0, part2);
+                    WriteRawChunk(ms, "IDAT", c2);
+
+                    byte[] c3 = new byte[part3];
+                    Buffer.BlockCopy(zlibBytes, part1 + part2, c3, 0, part3);
+                    WriteRawChunk(ms, "IDAT", c3);
+
+                    WriteRawChunk(ms, "IEND", new byte[0]);
+
+                    byte[] multiIdatPng = ms.ToArray();
+                    PixelBuffer buf = PngDecoder.Decode(multiIdatPng);
+                    Assert(buf.Width == 2 && buf.Height == 2, "Decodificação com múltiplos IDATs deve ser íntegra");
+                    Assert(buf.GetPixel(0, 0).R == 10 && buf.GetPixel(1, 1).B == 120, "Pixels reconstruídos com perfeição");
+                }
+            }
+        }
+
+        private static void Test_Png_RoundTrip_Rgb_And_Rgba()
+        {
+            var orig = new PixelBuffer(12, 10);
+            for (int y = 0; y < 10; y++)
+            {
+                for (int x = 0; x < 12; x++)
+                {
+                    byte r = (byte)(x * 20);
+                    byte g = (byte)(y * 25);
+                    byte b = (byte)((x + y) * 10);
+                    byte a = (byte)(50 + (x * y) % 205);
+                    orig.SetPixel(x, y, new PixelColor(r, g, b, a));
+                }
+            }
+
+            // 1. Round-trip RGBA (32-bit)
+            byte[] rgbaPng = PngEncoder.Encode(orig, true, PngFilter.FilterNone);
+            PixelBuffer decRgba = PngDecoder.Decode(rgbaPng);
+            Assert(decRgba.Width == 12 && decRgba.Height == 10, "Largura e altura RGBA preservadas");
+            for (int y = 0; y < 10; y++)
+            {
+                for (int x = 0; x < 12; x++)
+                {
+                    PixelColor o = orig.GetPixel(x, y);
+                    PixelColor d = decRgba.GetPixel(x, y);
+                    Assert(o.R == d.R && o.G == d.G && o.B == d.B && o.A == d.A,
+                        string.Format("Pixel RGBA ({0},{1}) divergente", x, y));
+                }
+            }
+
+            // 2. Round-trip RGB (24-bit)
+            byte[] rgbPng = PngEncoder.Encode(orig, false, PngFilter.FilterNone);
+            PixelBuffer decRgb = PngDecoder.Decode(rgbPng);
+            Assert(decRgb.Width == 12 && decRgb.Height == 10, "Largura e altura RGB preservadas");
+            for (int y = 0; y < 10; y++)
+            {
+                for (int x = 0; x < 12; x++)
+                {
+                    PixelColor o = orig.GetPixel(x, y);
+                    PixelColor d = decRgb.GetPixel(x, y);
+                    Assert(o.R == d.R && o.G == d.G && o.B == d.B && d.A == 255,
+                        string.Format("Pixel RGB ({0},{1}) divergente", x, y));
+                }
+            }
+        }
+
+        private static void Test_Png_Encoder_All5_Filters()
+        {
+            var buf = new PixelBuffer(8, 8);
+            for (int y = 0; y < 8; y++)
+            {
+                for (int x = 0; x < 8; x++)
+                {
+                    buf.SetPixel(x, y, new PixelColor((byte)(x * 30), (byte)(y * 30), (byte)((x + y) * 15), 255));
+                }
+            }
+
+            for (byte f = 0; f <= 4; f++)
+            {
+                byte[] png = PngEncoder.Encode(buf, true, f);
+                PixelBuffer dec = PngDecoder.Decode(png);
+                Assert(dec.Width == 8 && dec.Height == 8, "Dimensões preservadas no filtro " + f);
+                for (int y = 0; y < 8; y++)
+                {
+                    for (int x = 0; x < 8; x++)
+                    {
+                        PixelColor o = buf.GetPixel(x, y);
+                        PixelColor d = dec.GetPixel(x, y);
+                        Assert(o.R == d.R && o.G == d.G && o.B == d.B && o.A == d.A,
+                            string.Format("Filtro {0}: Pixel ({1},{2}) divergente", f, x, y));
+                    }
+                }
+            }
+        }
+
+        private static void Test_Png_Security_StrictRejections()
+        {
+            byte[] validPng = CreateRawPng(1, 1, false, new byte[] { 0, 255, 255, 255 });
+
+            // 1. Assinatura mágica inválida
+            byte[] badSig = (byte[])validPng.Clone();
+            badSig[0] = 0x00;
+            bool threwSig = false;
+            try { PngDecoder.Decode(badSig); } catch (CorruptDataException) { threwSig = true; }
+            Assert(threwSig, "Rejeita assinatura mágica inválida");
+
+            // 2. Arquivo truncado
+            byte[] truncated = new byte[7];
+            Array.Copy(validPng, 0, truncated, 0, 7);
+            bool threwTrunc = false;
+            try { PngDecoder.Decode(truncated); } catch (CorruptDataException) { threwTrunc = true; }
+            Assert(threwTrunc, "Rejeita arquivo truncado antes da assinatura completa");
+
+            // 3. CRC-32 do chunk IHDR adulterado
+            byte[] badCrc = (byte[])validPng.Clone();
+            badCrc[29] ^= 0xFF; // corrompe CRC do IHDR
+            bool threwCrc = false;
+            try { PngDecoder.Decode(badCrc); } catch (CorruptDataException) { threwCrc = true; }
+            Assert(threwCrc, "Rejeita chunk com CRC-32 adulterado");
+
+            // 4. ColorType 3 (Indexado com paleta)
+            byte[] indexedIhdr = (byte[])validPng.Clone();
+            indexedIhdr[25] = 3; // ColorType = 3 (offset 16 + 9)
+            uint crcIndexed = PngCrc32.Calculate("IHDR", indexedIhdr, 16, 13);
+            indexedIhdr[29] = (byte)((crcIndexed >> 24) & 0xFF);
+            indexedIhdr[30] = (byte)((crcIndexed >> 16) & 0xFF);
+            indexedIhdr[31] = (byte)((crcIndexed >> 8) & 0xFF);
+            indexedIhdr[32] = (byte)(crcIndexed & 0xFF);
+            bool threwIndexed = false;
+            try { PngDecoder.Decode(indexedIhdr); } catch (UnsupportedFormatException) { threwIndexed = true; }
+            Assert(threwIndexed, "Rejeita estritamente PNG indexado (ColorType 3)");
+
+            // 5. ColorType 0 (Escala de cinza)
+            byte[] grayIhdr = (byte[])validPng.Clone();
+            grayIhdr[25] = 0; // ColorType = 0
+            uint crcGray = PngCrc32.Calculate("IHDR", grayIhdr, 16, 13);
+            grayIhdr[29] = (byte)((crcGray >> 24) & 0xFF);
+            grayIhdr[30] = (byte)((crcGray >> 16) & 0xFF);
+            grayIhdr[31] = (byte)((crcGray >> 8) & 0xFF);
+            grayIhdr[32] = (byte)(crcGray & 0xFF);
+            bool threwGray = false;
+            try { PngDecoder.Decode(grayIhdr); } catch (UnsupportedFormatException) { threwGray = true; }
+            Assert(threwGray, "Rejeita estritamente PNG em escala de cinza (ColorType 0)");
+
+            // 6. InterlaceMethod = 1 (Adam7)
+            byte[] adam7Ihdr = (byte[])validPng.Clone();
+            adam7Ihdr[28] = 1; // Interlace = 1 (offset 16 + 12)
+            uint crcAdam7 = PngCrc32.Calculate("IHDR", adam7Ihdr, 16, 13);
+            adam7Ihdr[29] = (byte)((crcAdam7 >> 24) & 0xFF);
+            adam7Ihdr[30] = (byte)((crcAdam7 >> 16) & 0xFF);
+            adam7Ihdr[31] = (byte)((crcAdam7 >> 8) & 0xFF);
+            adam7Ihdr[32] = (byte)(crcAdam7 & 0xFF);
+            bool threwAdam7 = false;
+            try { PngDecoder.Decode(adam7Ihdr); } catch (UnsupportedFormatException) { threwAdam7 = true; }
+            Assert(threwAdam7, "Rejeita estritamente entrelaçamento Adam7");
+
+            // 7. Dimensão zero (Width = 0)
+            byte[] zeroWIhdr = (byte[])validPng.Clone();
+            zeroWIhdr[16] = 0; zeroWIhdr[17] = 0; zeroWIhdr[18] = 0; zeroWIhdr[19] = 0;
+            uint crcZeroW = PngCrc32.Calculate("IHDR", zeroWIhdr, 16, 13);
+            zeroWIhdr[29] = (byte)((crcZeroW >> 24) & 0xFF);
+            zeroWIhdr[30] = (byte)((crcZeroW >> 16) & 0xFF);
+            zeroWIhdr[31] = (byte)((crcZeroW >> 8) & 0xFF);
+            zeroWIhdr[32] = (byte)(crcZeroW & 0xFF);
+            bool threwZeroW = false;
+            try { PngDecoder.Decode(zeroWIhdr); } catch (CorruptDataException) { threwZeroW = true; }
+            Assert(threwZeroW, "Rejeita largura zero (0x0)");
+
+            // 8. Dimensão excessiva (> 16384)
+            byte[] hugeWIhdr = (byte[])validPng.Clone();
+            hugeWIhdr[16] = 0; hugeWIhdr[17] = 0; hugeWIhdr[18] = 0x50; hugeWIhdr[19] = 0x00; // 20480
+            uint crcHugeW = PngCrc32.Calculate("IHDR", hugeWIhdr, 16, 13);
+            hugeWIhdr[29] = (byte)((crcHugeW >> 24) & 0xFF);
+            hugeWIhdr[30] = (byte)((crcHugeW >> 16) & 0xFF);
+            hugeWIhdr[31] = (byte)((crcHugeW >> 8) & 0xFF);
+            hugeWIhdr[32] = (byte)(crcHugeW & 0xFF);
+            bool threwHugeW = false;
+            try { PngDecoder.Decode(hugeWIhdr); } catch (ResourceLimitException) { threwHugeW = true; }
+            Assert(threwHugeW, "Protege contra dimensões excessivas (> 16384)");
+        }
+
+        private static void Test_Png_Engine_Inspect()
+        {
+            var engine = new PngEngine();
+            var buf = new PixelBuffer(25, 15);
+            buf.SetPixel(0, 0, new PixelColor(255, 0, 0, 100)); // transparente -> força RGBA
+            byte[] png = PngEncoder.Encode(buf, true, PngFilter.FilterNone);
+
+            using (var ms = new MemoryStream(png))
+            {
+                FormatInspection insp = engine.Inspect(ms, "test.png");
+                Assert(insp.IsSupported, "PNG deve ser inspecionado como suportado");
+                Assert(insp.FormatId == "png", "FormatId deve ser 'png'");
+                Assert(insp.Width == 25, "Largura deve ser 25");
+                Assert(insp.Height == 15, "Altura deve ser 15");
+                Assert(insp.Metadata["BitDepth"] == "8", "BitDepth deve ser 8");
+                Assert(insp.Metadata["ColorType"] == "Truecolor RGBA (6)", "ColorType deve ser Truecolor RGBA (6)");
+                Assert(insp.Metadata["HasAlpha"] == "true", "HasAlpha deve ser true");
+            }
+        }
+
+        private static void Test_Png_Engine_Convert_Transforms()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_png_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string inputPng = Path.Combine(tempDir, "source.png");
+                var buf = new PixelBuffer(50, 50);
+                for (int y = 0; y < 50; y++)
+                {
+                    for (int x = 0; x < 50; x++)
+                    {
+                        buf.SetPixel(x, y, new PixelColor((byte)(x * 5), (byte)(y * 5), 100, 255));
+                    }
+                }
+                File.WriteAllBytes(inputPng, PngEncoder.Encode(buf));
+
+                var engine = new PngEngine();
+                var req = new ConvertRequest
+                {
+                    InputPath = inputPng,
+                    TargetFormat = "png",
+                    OutputDirectory = tempDir,
+                    OutputFileName = "transformed"
+                };
+                req.Settings["cropWidth"] = "30";
+                req.Settings["cropHeight"] = "30";
+                req.Settings["cropPosition"] = "center";
+                req.Settings["resizeWidth"] = "15";
+                req.Settings["resizeHeight"] = "15";
+                req.Settings["filter"] = "bilinear";
+                req.Settings["watermarkText"] = "LODINO";
+
+                ConvertResult res = engine.Convert(req, null);
+                Assert(res.Status == "completed", "Conversão com transformações deve ter sucesso");
+                Assert(File.Exists(res.OutputPath), "Arquivo de saída deve existir");
+
+                byte[] outBytes = File.ReadAllBytes(res.OutputPath);
+                PixelBuffer outBuf = PngDecoder.Decode(outBytes);
+                Assert(outBuf.Width == 15 && outBuf.Height == 15, "Dimensões pós-crop e resize devem ser 15x15");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, true);
+                }
+            }
+        }
+
+        private static void Test_Png_Engine_Bidirectional_Bmp_Png()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_bidir_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                // 1. Cria imagem original BMP
+                string origBmp = Path.Combine(tempDir, "orig.bmp");
+                var origBuf = new PixelBuffer(8, 8);
+                for (int y = 0; y < 8; y++)
+                {
+                    for (int x = 0; x < 8; x++)
+                    {
+                        origBuf.SetPixel(x, y, new PixelColor((byte)(x * 32), (byte)(y * 32), 128, 255));
+                    }
+                }
+                File.WriteAllBytes(origBmp, BmpEncoder.Encode(origBuf, 24));
+
+                // 2. Resolve motor para BMP -> PNG
+                ICoreEngine bmpToPngEngine = EngineRegistry.Default.Resolve("bmp", "png");
+                Assert(bmpToPngEngine.EngineId == "image-png", "EngineRegistry deve resolver image-png para rota bmp -> png");
+
+                var reqBmpToPng = new ConvertRequest
+                {
+                    InputPath = origBmp,
+                    TargetFormat = "png",
+                    OutputDirectory = tempDir,
+                    OutputFileName = "converted_from_bmp"
+                };
+                ConvertResult resPng = bmpToPngEngine.Convert(reqBmpToPng, null);
+                Assert(resPng.Status == "completed", "Conversão BMP -> PNG deve ser bem-sucedida");
+
+                // Inspeciona PNG gerado
+                using (var pngStream = File.OpenRead(resPng.OutputPath))
+                {
+                    FormatInspection insp = bmpToPngEngine.Inspect(pngStream, resPng.OutputPath);
+                    Assert(insp.IsSupported && insp.Width == 8 && insp.Height == 8, "PNG convertido deve ter dimensões 8x8");
+                }
+
+                // 3. Resolve motor para PNG -> BMP
+                ICoreEngine pngToBmpEngine = EngineRegistry.Default.Resolve("png", "bmp");
+                Assert(pngToBmpEngine.EngineId == "image-png", "EngineRegistry deve resolver image-png para rota png -> bmp");
+
+                var reqPngToBmp = new ConvertRequest
+                {
+                    InputPath = resPng.OutputPath,
+                    TargetFormat = "bmp",
+                    OutputDirectory = tempDir,
+                    OutputFileName = "converted_back_to_bmp"
+                };
+                ConvertResult resBmp = pngToBmpEngine.Convert(reqPngToBmp, null);
+                Assert(resBmp.Status == "completed", "Conversão reversa PNG -> BMP deve ser bem-sucedida");
+
+                // Verifica fidelidade dos pixels do BMP re-convertido
+                byte[] finalBmpBytes = File.ReadAllBytes(resBmp.OutputPath);
+                PixelBuffer finalBuf = BmpDecoder.Decode(finalBmpBytes);
+                Assert(finalBuf.Width == 8 && finalBuf.Height == 8, "BMP re-convertido deve manter 8x8");
+
+                for (int y = 0; y < 8; y++)
+                {
+                    for (int x = 0; x < 8; x++)
+                    {
+                        PixelColor o = origBuf.GetPixel(x, y);
+                        PixelColor f = finalBuf.GetPixel(x, y);
+                        Assert(o.R == f.R && o.G == f.G && o.B == f.B,
+                            string.Format("Pixel ({0},{1}) divergente na rota bidirecional", x, y));
+                    }
+                }
+
+                // 4. Valida resolução das três rotas no EngineRegistry
+                Assert(EngineRegistry.Default.Resolve("png", "png").EngineId == "image-png", "Resolução png -> png");
+                Assert(EngineRegistry.Default.Resolve("png", "bmp").EngineId == "image-png", "Resolução png -> bmp");
+                Assert(EngineRegistry.Default.Resolve("bmp", "png").EngineId == "image-png", "Resolução bmp -> png");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, true);
+                }
+            }
         }
 
         #endregion
