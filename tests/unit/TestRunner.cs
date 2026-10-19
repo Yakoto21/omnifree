@@ -257,6 +257,11 @@ namespace Lodino.Tests
             RunTest("WAV (Engine): Inspeção completa de metadados e registro no EngineRegistry", Test_Wav_Engine_Inspect_And_Registry);
             RunTest("WAV (Engine): Pipeline de conversão ponta a ponta com flags de transformação", Test_Wav_Engine_ConvertPipeline_WithSettings);
             RunTest("WAV (Interoperabilidade): Validação de arquivo gerado via System.Media.SoundPlayer", Test_Wav_External_Interoperability_SystemSoundPlayer);
+            RunTest("HARDENING WAV: Rejeição de chunks 'fmt ' duplicados (D-WAV-01)", Test_Wav_Hardening_DuplicateFmtChunk_Rejection);
+            RunTest("HARDENING WAV: Rejeição de chunks auxiliares individuais e acumulados excessivos (D-WAV-04)", Test_Wav_Hardening_AuxiliaryChunkLimits_Rejection);
+            RunTest("HARDENING WAV: Detecção de truncamento de chunk auxiliar em stream não-seekable (D-WAV-04)", Test_Wav_Hardening_NonSeekable_PrematureEof_InAuxiliaryChunk);
+            RunTest("HARDENING WAV: Validação rigorosa de cabeçalho WAVE_FORMAT_EXTENSIBLE (D-WAV-05)", Test_Wav_Hardening_ExtensibleHeader_Validation);
+            RunTest("HARDENING WAV: Teto de segurança para memória do buffer de áudio (400 MB)", Test_Wav_Hardening_MaxAudioMemoryBytes_Ceiling);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -4811,6 +4816,21 @@ namespace Lodino.Tests
                 }
                 Assert(maxErr < 0.015f, "Erro de quantização 8-bit deve ser menor que 0.015");
             }
+
+            // Verificação exaustiva de todos os 256 valores 8-bit unsigned (D-WAV-02)
+            var ex8 = new AudioBuffer(1, 44100, 8, 256);
+            for (int b = 0; b < 256; b++) ex8.SetSampleQ31(0, b, (b - 128) << 24);
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(ex8, ms);
+                ms.Position = 0;
+                var decEx8 = WavDecoder.Decode(ms);
+                for (int b = 0; b < 256; b++)
+                {
+                    int expected = (b - 128) << 24;
+                    Assert(decEx8.GetSampleQ31(0, b) == expected, string.Format("Fidelidade exata do byte {0}", b));
+                }
+            }
         }
 
         private static void Test_Wav_RoundTrip_8Bit_Stereo()
@@ -4879,6 +4899,26 @@ namespace Lodino.Tests
                     float orig = buffer.GetSample(0, i);
                     float dec = decoded.GetSample(0, i);
                     Assert(Math.Abs(orig - dec) < 0.0001f, "Fidelidade 16-bit deve ter erro menor que 10^-4");
+                }
+            }
+
+            // Verificação exaustiva de todos os 65.536 valores 16-bit signed
+            var ex16 = new AudioBuffer(1, 48000, 16, 65536);
+            for (int i = 0; i < 65536; i++)
+            {
+                short s = (short)(i - 32768);
+                ex16.SetSampleQ31(0, i, (int)s << 16);
+            }
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(ex16, ms);
+                ms.Position = 0;
+                var decEx16 = WavDecoder.Decode(ms);
+                for (int i = 0; i < 65536; i++)
+                {
+                    short s = (short)(i - 32768);
+                    int expected = (int)s << 16;
+                    Assert(decEx16.GetSampleQ31(0, i) == expected, "Fidelidade exata 16-bit");
                 }
             }
         }
@@ -4955,14 +4995,42 @@ namespace Lodino.Tests
                 Assert(Math.Abs(decStereo.GetSample(0, 100) - 0.5f) < 1e-6f, "Esquerdo 24-bit");
                 Assert(Math.Abs(decStereo.GetSample(1, 100) - (-0.5f)) < 1e-6f, "Direito 24-bit");
             }
+
+            // Verificação de fidelidade exata bit-perfect de 24 bits nos bits menos significativos
+            var buf24 = new AudioBuffer(1, 48000, 24, 1000);
+            for (int i = 0; i < 1000; i++)
+            {
+                int val24 = (i * 16777) - 8388000;
+                buf24.SetSampleQ31(0, i, val24 << 8);
+            }
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(buf24, ms);
+                ms.Position = 0;
+                var dec24 = WavDecoder.Decode(ms);
+                for (int i = 0; i < 1000; i++)
+                {
+                    int expected = ((i * 16777) - 8388000) << 8;
+                    Assert(dec24.GetSampleQ31(0, i) == expected, "Preservação 24-bit bit-perfect");
+                }
+            }
         }
 
         private static void Test_Wav_RoundTrip_32Bit_Mono_And_Stereo()
         {
             var mono = new AudioBuffer(1, 192000, 32, 1000);
+            int[] testPatterns = new int[]
+            {
+                0, 1, -1, int.MaxValue, int.MinValue,
+                0x12345678, unchecked((int)0x87654321),
+                unchecked((int)0xA5A5A5A5), 0x5A5A5A5A,
+                0x7FFFFF00, unchecked((int)0x800000FF),
+                123456789, -987654321
+            };
+
             for (int i = 0; i < 1000; i++)
             {
-                mono.SetSample(0, i, (float)Math.Cos(i * 0.02) * 0.95f);
+                mono.SetSampleQ31(0, i, testPatterns[i % testPatterns.Length]);
             }
 
             using (var ms = new MemoryStream())
@@ -4975,7 +5043,28 @@ namespace Lodino.Tests
                 Assert(dec.SampleRate == 192000, "192000 Hz");
                 for (int i = 0; i < 1000; i++)
                 {
-                    Assert(Math.Abs(mono.GetSample(0, i) - dec.GetSample(0, i)) < 1e-7f, "Fidelidade 32-bit < 1e-7");
+                    int expected = testPatterns[i % testPatterns.Length];
+                    int actual = dec.GetSampleQ31(0, i);
+                    Assert(actual == expected, string.Format("Fidelidade inteira 32-bit exata: esperado 0x{0:X8}, obtido 0x{1:X8}", expected, actual));
+                }
+            }
+
+            var stereo = new AudioBuffer(2, 96000, 32, 500);
+            for (int i = 0; i < 500; i++)
+            {
+                stereo.SetSampleQ31(0, i, 0x11223344);
+                stereo.SetSampleQ31(1, i, unchecked((int)0x8899AABB));
+            }
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(stereo, ms);
+                ms.Position = 0;
+                var decStereo = WavDecoder.Decode(ms);
+                Assert(decStereo.Channels == 2, "Stereo 32-bit");
+                for (int i = 0; i < 500; i++)
+                {
+                    Assert(decStereo.GetSampleQ31(0, i) == 0x11223344, "Esquerdo 32-bit bit-perfect");
+                    Assert(decStereo.GetSampleQ31(1, i) == unchecked((int)0x8899AABB), "Direito 32-bit bit-perfect");
                 }
             }
         }
@@ -5429,6 +5518,258 @@ namespace Lodino.Tests
             {
                 if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
             }
+        }
+
+        private static void Test_Wav_Hardening_DuplicateFmtChunk_Rejection()
+        {
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)120);
+                w.Write(WavHeader.FourCcWave);
+
+                // Primeiro chunk fmt
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)1);
+                w.Write((uint)44100);
+                w.Write((uint)88200);
+                w.Write((ushort)2);
+                w.Write((ushort)16);
+
+                // Segundo chunk fmt (duplicado - anômalo)
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)1);
+                w.Write((uint)44100);
+                w.Write((uint)88200);
+                w.Write((ushort)2);
+                w.Write((ushort)16);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threwDupFmt = false;
+                try
+                {
+                    WavDecoder.Decode(ms);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("Múltiplos chunks 'fmt '"))
+                    {
+                        threwDupFmt = true;
+                    }
+                }
+                Assert(threwDupFmt, "Deve rejeitar múltiplos chunks 'fmt ' com CorruptDataException (D-WAV-01)");
+            }
+        }
+
+        private static void Test_Wav_Hardening_AuxiliaryChunkLimits_Rejection()
+        {
+            // 1. Chunk único excedendo MaxSingleChunkSize (64 MB)
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)1000);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(Encoding.ASCII.GetBytes("JUNK"));
+                w.Write((uint)(SecurityLimits.MaxSingleChunkSize + 1024)); // > 64 MB
+
+                ms.Position = 0;
+                bool threwSingleLimit = false;
+                try
+                {
+                    WavHeader.Read(ms);
+                }
+                catch (ResourceLimitException)
+                {
+                    threwSingleLimit = true;
+                }
+                Assert(threwSingleLimit, "Deve rejeitar chunk auxiliar individual > 64 MB (D-WAV-04)");
+            }
+
+            // 2. Chunks auxiliares acumulados excedendo MaxAuxiliaryHeaderBytes (16 MB)
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)20000000);
+                w.Write(WavHeader.FourCcWave);
+
+                // Chunk fmt padrão
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)1);
+                w.Write((uint)44100);
+                w.Write((uint)88200);
+                w.Write((ushort)2);
+                w.Write((ushort)16);
+
+                // Dois chunks auxiliares de 9 MB cada (total 18 MB > 16 MB)
+                w.Write(Encoding.ASCII.GetBytes("LST1"));
+                w.Write((uint)(9 * 1024 * 1024));
+                ms.Seek(9 * 1024 * 1024, SeekOrigin.Current);
+
+                w.Write(Encoding.ASCII.GetBytes("LST2"));
+                w.Write((uint)(9 * 1024 * 1024));
+                ms.Seek(9 * 1024 * 1024, SeekOrigin.Current);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threwAccumLimit = false;
+                try
+                {
+                    WavHeader.Read(ms);
+                }
+                catch (ResourceLimitException)
+                {
+                    threwAccumLimit = true;
+                }
+                Assert(threwAccumLimit, "Deve rejeitar metadados auxiliares acumulados > 16 MB (D-WAV-04)");
+            }
+        }
+
+        private static void Test_Wav_Hardening_NonSeekable_PrematureEof_InAuxiliaryChunk()
+        {
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)5000);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(Encoding.ASCII.GetBytes("JUNK"));
+                w.Write((uint)2048); // declara 2048 bytes
+                w.Write(new byte[64]); // escreve apenas 64 bytes e encerra o fluxo
+
+                ms.Position = 0;
+                var nonSeekable = new NonSeekableStream(ms);
+
+                bool threwTruncAux = false;
+                try
+                {
+                    WavHeader.Read(nonSeekable);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("Arquivo truncado durante o processamento de chunk auxiliar"))
+                    {
+                        threwTruncAux = true;
+                    }
+                }
+                Assert(threwTruncAux, "Deve lançar CorruptDataException quando stream não-seekable truncar dentro de chunk auxiliar (D-WAV-04)");
+            }
+        }
+
+        private static void Test_Wav_Hardening_ExtensibleHeader_Validation()
+        {
+            // 1. cbSize < 22
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)200);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)40); // tamanho do fmt
+                w.Write(WavHeader.WaveFormatExtensible);
+                w.Write((ushort)2);
+                w.Write((uint)48000);
+                w.Write((uint)192000);
+                w.Write((ushort)4);
+                w.Write((ushort)16);
+
+                w.Write((ushort)10); // cbSize = 10 (< 22 bytes obrigatórios)
+                w.Write(new byte[22]);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threwShortCb = false;
+                try
+                {
+                    WavHeader.Read(ms);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("mínimo 22 bytes"))
+                    {
+                        threwShortCb = true;
+                    }
+                }
+                Assert(threwShortCb, "Deve rejeitar cbSize < 22 em WAVE_FORMAT_EXTENSIBLE (D-WAV-05)");
+            }
+
+            // 2. validBits > BitsPerSample
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)200);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)40);
+                w.Write(WavHeader.WaveFormatExtensible);
+                w.Write((ushort)2);
+                w.Write((uint)48000);
+                w.Write((uint)192000);
+                w.Write((ushort)4);
+                w.Write((ushort)16); // BitsPerSample = 16
+
+                w.Write((ushort)22); // cbSize = 22
+                w.Write((ushort)24); // validBits = 24 > BitsPerSample (16)
+                w.Write((uint)3);    // channelMask
+                w.Write(WavHeader.PcmSubFormatGuid);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threwInvalidValidBits = false;
+                try
+                {
+                    WavHeader.Read(ms);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("validBits"))
+                    {
+                        threwInvalidValidBits = true;
+                    }
+                }
+                Assert(threwInvalidValidBits, "Deve rejeitar validBits > BitsPerSample em WAVE_FORMAT_EXTENSIBLE (D-WAV-05)");
+            }
+        }
+
+        private static void Test_Wav_Hardening_MaxAudioMemoryBytes_Ceiling()
+        {
+            bool threwMem = false;
+            try
+            {
+                // 8 canais * 20M quadros * 4 bytes = 640 MB (> 400 MB teto de segurança)
+                SecurityLimits.AssertAudioParameters(8, 48000, 32, 20000000);
+            }
+            catch (ResourceLimitException ex)
+            {
+                if (ex.Message.Contains("teto de segurança permitido"))
+                {
+                    threwMem = true;
+                }
+            }
+            Assert(threwMem, "Deve rejeitar buffers cujo consumo de memória estimada exceda MaxAudioMemoryBytes (400 MB)");
         }
 
         #endregion

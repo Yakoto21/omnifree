@@ -78,14 +78,14 @@ namespace Lodino.Core.Formats.Audio.Wav
                         int currentFrame = framesEncoded + f;
                         for (int c = 0; c < channels; c++)
                         {
-                            float sample = buffer.GetSample(c, currentFrame);
+                            int sampleQ31 = buffer.GetSampleQ31(c, currentFrame);
 
                             switch (bitsPerSample)
                             {
                                 case 8:
                                 {
                                     // 8-bit unsigned [0..255], centro em 128
-                                    int b = (int)Math.Round((sample + 1.0f) * 127.5f);
+                                    int b = (sampleQ31 >> 24) + 128;
                                     if (b < 0) b = 0;
                                     else if (b > 255) b = 255;
                                     rawBuffer[byteIndex++] = (byte)b;
@@ -94,7 +94,7 @@ namespace Lodino.Core.Formats.Audio.Wav
                                 case 16:
                                 {
                                     // 16-bit signed [-32768..32767]
-                                    int s = (int)Math.Round(sample < 0 ? sample * 32768.0f : sample * 32767.0f);
+                                    int s = sampleQ31 >> 16;
                                     if (s < -32768) s = -32768;
                                     else if (s > 32767) s = 32767;
                                     rawBuffer[byteIndex++] = (byte)(s & 0xFF);
@@ -104,7 +104,7 @@ namespace Lodino.Core.Formats.Audio.Wav
                                 case 24:
                                 {
                                     // 24-bit signed [-8388608..8388607]
-                                    int v = (int)Math.Round(sample < 0 ? sample * 8388608.0f : sample * 8388607.0f);
+                                    int v = sampleQ31 >> 8;
                                     if (v < -8388608) v = -8388608;
                                     else if (v > 8388607) v = 8388607;
                                     rawBuffer[byteIndex++] = (byte)(v & 0xFF);
@@ -115,8 +115,7 @@ namespace Lodino.Core.Formats.Audio.Wav
                                 case 32:
                                 {
                                     // 32-bit signed [-2147483648..2147483647]
-                                    double scaled = sample < 0 ? (double)sample * 2147483648.0 : (double)sample * 2147483647.0;
-                                    int v = (int)Math.Max(-2147483648.0, Math.Min(2147483647.0, Math.Round(scaled)));
+                                    int v = sampleQ31;
                                     rawBuffer[byteIndex++] = (byte)(v & 0xFF);
                                     rawBuffer[byteIndex++] = (byte)((v >> 8) & 0xFF);
                                     rawBuffer[byteIndex++] = (byte)((v >> 16) & 0xFF);

@@ -75,6 +75,7 @@ namespace Lodino.Core.Formats.Audio.Wav
 
             bool foundFmt = false;
             bool foundData = false;
+            long totalAuxiliaryBytes = 0;
 
             // 2. Iteração de Chunks
             long streamPos = 12;
@@ -101,8 +102,20 @@ namespace Lodino.Core.Formats.Audio.Wav
 
                 string chunkIdStr = Encoding.ASCII.GetString(BitConverter.GetBytes(chunkId));
 
+                if (chunkSize > SecurityLimits.MaxSingleChunkSize)
+                {
+                    throw new ResourceLimitException(string.Format(
+                        "Tamanho do chunk '{0}' ({1:N0} bytes) excede o limite máximo permitido de {2:N0} bytes.",
+                        chunkIdStr, chunkSize, SecurityLimits.MaxSingleChunkSize));
+                }
+
                 if (chunkId == FourCcFmt)
                 {
+                    if (foundFmt)
+                    {
+                        throw new CorruptDataException("Múltiplos chunks 'fmt ' encontrados no arquivo RIFF/WAVE.");
+                    }
+
                     if (chunkSize < 16)
                     {
                         throw new CorruptDataException(string.Format(
@@ -120,10 +133,28 @@ namespace Lodino.Core.Formats.Audio.Wav
                     long bytesLeftInChunk = chunkSize - 16;
 
                     // Suporte a WAVE_FORMAT_EXTENSIBLE se o SubFormat for PCM
-                    if (header.AudioFormat == WaveFormatExtensible && bytesLeftInChunk >= 24)
+                    if (header.AudioFormat == WaveFormatExtensible)
                     {
+                        if (bytesLeftInChunk < 24)
+                        {
+                            throw new CorruptDataException("Cabeçalho WAVE_FORMAT_EXTENSIBLE truncado.");
+                        }
+
                         ushort cbSize = reader.ReadUInt16();
+                        if (cbSize < 22)
+                        {
+                            throw new CorruptDataException(string.Format(
+                                "Cabeçalho WAVE_FORMAT_EXTENSIBLE inválido: cbSize={0} (mínimo 22 bytes esperado).", cbSize));
+                        }
+
                         ushort validBits = reader.ReadUInt16();
+                        if (validBits != 0 && validBits > header.BitsPerSample)
+                        {
+                            throw new CorruptDataException(string.Format(
+                                "WAVE_FORMAT_EXTENSIBLE inválido: validBits ({0}) maior que BitsPerSample ({1}).",
+                                validBits, header.BitsPerSample));
+                        }
+
                         uint channelMask = reader.ReadUInt32();
                         byte[] subFormat = reader.ReadBytes(16);
                         streamPos += 24;
@@ -177,6 +208,14 @@ namespace Lodino.Core.Formats.Audio.Wav
                 else
                 {
                     // Chunk auxiliar (LIST, JUNK, bext, id3 , etc.)
+                    totalAuxiliaryBytes += chunkSize;
+                    if (totalAuxiliaryBytes > SecurityLimits.MaxAuxiliaryHeaderBytes)
+                    {
+                        throw new ResourceLimitException(string.Format(
+                            "Tamanho acumulado de chunks auxiliares ({0:N0} bytes) excede o limite máximo de {1:N0} bytes.",
+                            totalAuxiliaryBytes, SecurityLimits.MaxAuxiliaryHeaderBytes));
+                    }
+
                     header.AuxiliaryChunks[chunkIdStr] = string.Format("{0} bytes", chunkSize);
 
                     // Pula o conteúdo do chunk
@@ -225,7 +264,10 @@ namespace Lodino.Core.Formats.Audio.Wav
                 {
                     int toRead = (int)Math.Min(buffer.Length, remaining);
                     int read = reader.Read(buffer, 0, toRead);
-                    if (read <= 0) break;
+                    if (read <= 0)
+                    {
+                        throw new CorruptDataException("Arquivo truncado durante o processamento de chunk auxiliar.");
+                    }
                     remaining -= read;
                 }
             }

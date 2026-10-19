@@ -68,20 +68,20 @@ namespace Lodino.Core.Formats.Audio.Wav
                     int currentFrame = framesDecoded + f;
                     for (int c = 0; c < channels; c++)
                     {
-                        float sampleVal;
+                        int sampleQ31;
                         switch (bitsPerSample)
                         {
                             case 8:
                             {
                                 byte b = rawBuffer[byteIndex++];
-                                sampleVal = (b - 128) / 128.0f;
+                                sampleQ31 = (b - 128) << 24;
                                 break;
                             }
                             case 16:
                             {
                                 short s = (short)(rawBuffer[byteIndex] | (rawBuffer[byteIndex + 1] << 8));
                                 byteIndex += 2;
-                                sampleVal = s < 0 ? (s / 32768.0f) : (s / 32767.0f);
+                                sampleQ31 = (int)s << 16;
                                 break;
                             }
                             case 24:
@@ -94,7 +94,7 @@ namespace Lodino.Core.Formats.Audio.Wav
                                     val |= unchecked((int)0xFF000000);
                                 }
                                 byteIndex += 3;
-                                sampleVal = val < 0 ? (val / 8388608.0f) : (val / 8388607.0f);
+                                sampleQ31 = val << 8;
                                 break;
                             }
                             case 32:
@@ -104,14 +104,14 @@ namespace Lodino.Core.Formats.Audio.Wav
                                           (rawBuffer[byteIndex + 2] << 16) |
                                           (rawBuffer[byteIndex + 3] << 24);
                                 byteIndex += 4;
-                                sampleVal = val < 0 ? (float)(val / 2147483648.0) : (float)(val / 2147483647.0);
+                                sampleQ31 = val;
                                 break;
                             }
                             default:
                                 throw new UnsupportedFormatException(string.Format("Profundidade de {0} bits não suportada.", bitsPerSample));
                         }
 
-                        buffer.SetSample(c, currentFrame, sampleVal);
+                        buffer.SetSampleQ31(c, currentFrame, sampleQ31);
                     }
                 }
 
