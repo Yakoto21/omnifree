@@ -199,26 +199,26 @@ namespace Lodino.Core.Formats.Image
         }
 
         /// <summary>
-        /// Recorte de retângulo arbitrário com validação de coordenadas.
+        /// Recorte de retângulo arbitrário com validação segura de coordenadas e prevenção de overflow.
         /// </summary>
         public PixelBuffer Crop(int x, int y, int width, int height)
         {
             SecurityLimits.AssertImageDimensions(width, height);
 
-            if (x < 0 || y < 0 || x + width > _width || y + height > _height)
+            if (x < 0 || y < 0 || width <= 0 || height <= 0 || x > _width - width || y > _height - height)
             {
-                throw new CorruptDataException(string.Format(
+                throw new ArgumentOutOfRangeException(string.Format(
                     "Área de recorte ({0},{1},{2},{3}) ultrapassa os limites da imagem original ({4}x{5}).",
                     x, y, width, height, _width, _height));
             }
 
             PixelBuffer result = new PixelBuffer(width, height);
-            int rowBytes = width * 4;
+            int rowBytes = checked(width * 4);
 
             for (int r = 0; r < height; r++)
             {
-                int srcOffset = ((y + r) * _width + x) * 4;
-                int dstOffset = r * rowBytes;
+                int srcOffset = checked(((y + r) * _width + x) * 4);
+                int dstOffset = checked(r * rowBytes);
                 Buffer.BlockCopy(_pixels, srcOffset, result.Pixels, dstOffset, rowBytes);
             }
 

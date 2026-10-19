@@ -94,10 +94,32 @@ namespace Lodino.Core.Formats.Image.Png
             PngChunk ihdrChunk = PngHeader.CreateIhdrChunk(width, height, hasAlpha);
             ihdrChunk.Write(outputStream);
 
-            // 3. Comprime dados com ZLIB / DEFLATE proprietário e grava chunk IDAT
+            // 3. Comprime dados com ZLIB / DEFLATE proprietário e particiona em chunks IDAT consecutivos (32 KB cada)
             byte[] compressedIdat = ZlibStream.Compress(filteredData);
-            PngChunk idatChunk = new PngChunk("IDAT", compressedIdat);
-            idatChunk.Write(outputStream);
+            const int idatChunkSize = 32 * 1024; // 32 KB por chunk IDAT
+            int idatOffset = 0;
+            int idatRemaining = compressedIdat.Length;
+
+            if (idatRemaining == 0)
+            {
+                PngChunk emptyIdat = new PngChunk("IDAT", new byte[0]);
+                emptyIdat.Write(outputStream);
+            }
+            else
+            {
+                while (idatRemaining > 0)
+                {
+                    int chunkSize = idatRemaining > idatChunkSize ? idatChunkSize : idatRemaining;
+                    byte[] chunkPayload = new byte[chunkSize];
+                    Buffer.BlockCopy(compressedIdat, idatOffset, chunkPayload, 0, chunkSize);
+
+                    PngChunk idatChunk = new PngChunk("IDAT", chunkPayload);
+                    idatChunk.Write(outputStream);
+
+                    idatOffset += chunkSize;
+                    idatRemaining -= chunkSize;
+                }
+            }
 
             // 4. Grava chunk IEND
             PngChunk iendChunk = new PngChunk("IEND", new byte[0]);

@@ -74,6 +74,10 @@ namespace Lodino.Core.Formats.Image.Png
                 if (len != 0)
                 {
                     int c = nextCode[len]++;
+                    if (c >= (1 << len))
+                    {
+                        throw new CorruptDataException("Árvore de Huffman sobre-subscrita ou inválida no fluxo DEFLATE.");
+                    }
                     tree.InsertCode(c, len, n);
                 }
             }
@@ -87,6 +91,11 @@ namespace Lodino.Core.Formats.Image.Png
             // Bits são navegados do MSB para o LSB do código canônico
             for (int i = length - 1; i >= 0; i--)
             {
+                if (_symbols[current] != -1)
+                {
+                    throw new CorruptDataException("Conflito de prefixo na árvore de Huffman.");
+                }
+
                 int bit = (code >> i) & 1;
                 if (bit == 0)
                 {
@@ -112,6 +121,11 @@ namespace Lodino.Core.Formats.Image.Png
                     }
                     current = _right[current];
                 }
+            }
+
+            if (_symbols[current] != -1 || _left[current] != 0 || _right[current] != 0)
+            {
+                throw new CorruptDataException("Conflito de prefixo na árvore de Huffman.");
             }
 
             _symbols[current] = symbol;

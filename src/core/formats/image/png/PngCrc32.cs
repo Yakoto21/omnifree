@@ -51,18 +51,21 @@ namespace Lodino.Core.Formats.Image.Png
         public static uint Update(uint currentCrc, byte[] buffer, int offset, int count)
         {
             if (buffer == null) throw new ArgumentNullException("buffer");
-            if (offset < 0 || count < 0 || offset + count > buffer.Length)
+            if (offset < 0 || count < 0 || count > buffer.Length - offset)
             {
                 throw new ArgumentOutOfRangeException("Intervalo de buffer inválido.");
             }
 
-            uint c = currentCrc;
-            for (int i = 0; i < count; i++)
+            unchecked
             {
-                byte index = (byte)((c ^ buffer[offset + i]) & 0xFF);
-                c = CrcTable[index] ^ (c >> 8);
+                uint c = currentCrc;
+                for (int i = 0; i < count; i++)
+                {
+                    byte index = (byte)((c ^ buffer[offset + i]) & 0xFF);
+                    c = CrcTable[index] ^ (c >> 8);
+                }
+                return c;
             }
-            return c;
         }
     }
 }

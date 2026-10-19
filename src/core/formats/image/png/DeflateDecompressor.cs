@@ -170,7 +170,11 @@ namespace Lodino.Core.Formats.Image.Png
                     }
                     int prev = allLengths[index - 1];
                     int repeat = 3 + reader.ReadBits(2);
-                    while (repeat-- > 0 && index < totalCodes)
+                    if (index + repeat > totalCodes)
+                    {
+                        throw new CorruptDataException("Código de repetição 16 ultrapassa a quantidade total de comprimentos de código.");
+                    }
+                    while (repeat-- > 0)
                     {
                         allLengths[index++] = prev;
                     }
@@ -178,7 +182,11 @@ namespace Lodino.Core.Formats.Image.Png
                 else if (sym == 17)
                 {
                     int repeat = 3 + reader.ReadBits(3);
-                    while (repeat-- > 0 && index < totalCodes)
+                    if (index + repeat > totalCodes)
+                    {
+                        throw new CorruptDataException("Código de repetição 17 ultrapassa a quantidade total de comprimentos de código.");
+                    }
+                    while (repeat-- > 0)
                     {
                         allLengths[index++] = 0;
                     }
@@ -186,7 +194,11 @@ namespace Lodino.Core.Formats.Image.Png
                 else if (sym == 18)
                 {
                     int repeat = 11 + reader.ReadBits(7);
-                    while (repeat-- > 0 && index < totalCodes)
+                    if (index + repeat > totalCodes)
+                    {
+                        throw new CorruptDataException("Código de repetição 18 ultrapassa a quantidade total de comprimentos de código.");
+                    }
+                    while (repeat-- > 0)
                     {
                         allLengths[index++] = 0;
                     }
@@ -263,6 +275,13 @@ namespace Lodino.Core.Formats.Image.Png
                     if (distExtraBits > 0)
                     {
                         distance += reader.ReadBits(distExtraBits);
+                    }
+
+                    if (distance > totalOutputBytes)
+                    {
+                        throw new CorruptDataException(string.Format(
+                            "Distância LZ77 ({0}) aponta para antes do início do fluxo ({1} bytes emitidos).",
+                            distance, totalOutputBytes));
                     }
 
                     // Cópia deslizante do histórico LZ77

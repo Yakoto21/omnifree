@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using Lodino.Core.Errors;
+using Lodino.Core.IO;
 using Lodino.Core.Safety;
 
 namespace Lodino.Core.Formats.Image.Png
@@ -34,7 +35,7 @@ namespace Lodino.Core.Formats.Image.Png
             if (stream == null) throw new ArgumentNullException("stream");
 
             byte[] header = new byte[8]; // 4 bytes comprimento + 4 bytes tipo
-            int read = stream.Read(header, 0, 8);
+            int read = StreamUtils.ReadExact(stream, header, 0, 8);
             if (read == 0) return null; // Fim legítimo do arquivo
             if (read < 8)
             {
@@ -56,25 +57,12 @@ namespace Lodino.Core.Formats.Image.Png
             string type = Encoding.ASCII.GetString(header, 4, 4);
 
             byte[] data = new byte[length];
-            int dataRead = 0;
-            while (dataRead < length)
-            {
-                int n = stream.Read(data, dataRead, (int)length - dataRead);
-                if (n <= 0)
-                {
-                    throw new CorruptDataException(string.Format(
-                        "Fim inesperado ao ler dados do chunk '{0}' ({1} de {2} bytes lidos).",
-                        type, dataRead, length));
-                }
-                dataRead += n;
-            }
+            StreamUtils.ReadExactOrThrow(stream, data, 0, (int)length,
+                string.Format("Fim inesperado ao ler dados do chunk '{0}'.", type));
 
             byte[] crcBytes = new byte[4];
-            int crcRead = stream.Read(crcBytes, 0, 4);
-            if (crcRead < 4)
-            {
-                throw new CorruptDataException(string.Format("CRC-32 do chunk '{0}' incompleto ou truncado.", type));
-            }
+            StreamUtils.ReadExactOrThrow(stream, crcBytes, 0, 4,
+                string.Format("CRC-32 do chunk '{0}' incompleto ou truncado.", type));
 
             uint fileCrc = ((uint)crcBytes[0] << 24) |
                            ((uint)crcBytes[1] << 16) |

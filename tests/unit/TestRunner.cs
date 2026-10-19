@@ -147,6 +147,20 @@ namespace Lodino.Tests
             RunTest("PNG (Engine): Pipeline completo de transformações (crop, resize, watermark)", Test_Png_Engine_Convert_Transforms);
             RunTest("PNG (Rotas Bidirecionais): Conversão PNG <-> BMP e resolução no EngineRegistry", Test_Png_Engine_Bidirectional_Bmp_Png);
 
+            // =================================================
+            //   LODINO NATIVE CORE — HARDENING BMP + PNG       
+            //   Módulo: Segurança e Resiliência contra Ataques  
+            // =================================================
+            RunTest("HARDENING: Proteção contra Decompression Bomb (Zip Bomb em PNG)", Test_Hardening_DecompressionBomb_Protection);
+            RunTest("HARDENING: Particionamento de IDAT em chunks consecutivos de 32 KB", Test_Hardening_Idat_Chunking_Generation);
+            RunTest("HARDENING: Resiliência contra fluxos fragmentados (1-3 bytes por leitura)", Test_Hardening_Stream_Fragmentation_Resilience);
+            RunTest("HARDENING: Prevenção contra overflow de inteiros em PixelBuffer.Crop", Test_Hardening_PixelBuffer_Crop_Overflow);
+            RunTest("HARDENING: Rejeição de distância LZ77 anterior ao início do fluxo", Test_Hardening_Deflate_Lz77_Distance_Underflow);
+            RunTest("HARDENING: Rejeição de códigos de repetição dinâmicos DEFLATE além dos limites", Test_Hardening_Deflate_Dynamic_Repeat_Overflow);
+            RunTest("HARDENING: Rejeição de árvores de Huffman sobre-subscritas (Violação de Kraft)", Test_Hardening_Huffman_Oversubscribed_Tree);
+            RunTest("HARDENING: Leitura segura de streams não-navegáveis (CanSeek = false) no BMP", Test_Hardening_Bmp_NonSeekable_Stream);
+            RunTest("HARDENING: Rejeição de bytes espúrios após Adler-32 em fluxo ZLIB", Test_Hardening_Zlib_Trailing_Garbage);
+
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
             Console.WriteLine("-------------------------------------------------");
@@ -2057,6 +2071,390 @@ namespace Lodino.Tests
                 }
             }
         }
+
+        #region Hardening BMP + PNG (Testes de Segurança e Resiliência)
+
+        private class FragmentedStream : Stream
+        {
+            private readonly Stream _inner;
+            private readonly int _maxPerRead;
+
+            public FragmentedStream(Stream inner, int maxPerRead = 3)
+            {
+                _inner = inner;
+                _maxPerRead = maxPerRead;
+            }
+
+            public override bool CanRead { get { return _inner.CanRead; } }
+            public override bool CanSeek { get { return false; } }
+            public override bool CanWrite { get { return false; } }
+            public override long Length { get { throw new NotSupportedException(); } }
+            public override long Position
+            {
+                get { throw new NotSupportedException(); }
+                set { throw new NotSupportedException(); }
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                int toRead = Math.Min(count, _maxPerRead);
+                return _inner.Read(buffer, offset, toRead);
+            }
+
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
+            public override void SetLength(long value) { throw new NotSupportedException(); }
+            public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+        }
+
+        private class NonSeekableStream : Stream
+        {
+            private readonly Stream _inner;
+
+            public NonSeekableStream(Stream inner)
+            {
+                _inner = inner;
+            }
+
+            public override bool CanRead { get { return _inner.CanRead; } }
+            public override bool CanSeek { get { return false; } }
+            public override bool CanWrite { get { return false; } }
+            public override long Length { get { throw new NotSupportedException(); } }
+            public override long Position
+            {
+                get { throw new NotSupportedException(); }
+                set { throw new NotSupportedException(); }
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                return _inner.Read(buffer, offset, count);
+            }
+
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
+            public override void SetLength(long value) { throw new NotSupportedException(); }
+            public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+        }
+
+        private static void Test_Hardening_DecompressionBomb_Protection()
+        {
+            // Dimensões declaradas pequenas: 2x2 RGBA -> espera exatamente 2 * (1 + 8) = 18 bytes
+            // Criamos um payload comprimido com DEFLATE Stored de 2000 bytes (> 18 bytes)
+            byte[] bombPayload = new byte[2000];
+            for (int i = 0; i < bombPayload.Length; i++) bombPayload[i] = (byte)(i & 0xFF);
+
+            using (var zlibMs = new MemoryStream())
+            {
+                zlibMs.WriteByte(0x78);
+                zlibMs.WriteByte(0x01);
+
+                // Bloco DEFLATE Stored
+                zlibMs.WriteByte(0x01); // BFINAL=1, BTYPE=00
+                ushort len = (ushort)bombPayload.Length;
+                ushort nlen = (ushort)(~len);
+                zlibMs.WriteByte((byte)(len & 0xFF));
+                zlibMs.WriteByte((byte)((len >> 8) & 0xFF));
+                zlibMs.WriteByte((byte)(nlen & 0xFF));
+                zlibMs.WriteByte((byte)((nlen >> 8) & 0xFF));
+                zlibMs.Write(bombPayload, 0, bombPayload.Length);
+
+                uint adler = Adler32.Calculate(bombPayload, 0, bombPayload.Length);
+                zlibMs.WriteByte((byte)((adler >> 24) & 0xFF));
+                zlibMs.WriteByte((byte)((adler >> 16) & 0xFF));
+                zlibMs.WriteByte((byte)((adler >> 8) & 0xFF));
+                zlibMs.WriteByte((byte)(adler & 0xFF));
+
+                byte[] zlibBytes = zlibMs.ToArray();
+
+                using (var pngMs = new MemoryStream())
+                {
+                    pngMs.Write(PngHeader.PngSignature, 0, 8);
+
+                    // IHDR 2x2 RGBA
+                    byte[] ihdr = new byte[13];
+                    ihdr[3] = 2; // Width = 2
+                    ihdr[7] = 2; // Height = 2
+                    ihdr[8] = 8; // 8-bit
+                    ihdr[9] = 6; // RGBA
+                    WriteRawChunk(pngMs, "IHDR", ihdr);
+
+                    WriteRawChunk(pngMs, "IDAT", zlibBytes);
+                    WriteRawChunk(pngMs, "IEND", new byte[0]);
+
+                    byte[] bombPng = pngMs.ToArray();
+
+                    bool stoppedBomb = false;
+                    try
+                    {
+                        PngDecoder.Decode(bombPng);
+                    }
+                    catch (ResourceLimitException)
+                    {
+                        stoppedBomb = true;
+                    }
+                    Assert(stoppedBomb, "Decompression Bomb deve ser abortada imediatamente com ResourceLimitException ao exceder bytes esperados");
+                }
+            }
+        }
+
+        private static void Test_Hardening_Idat_Chunking_Generation()
+        {
+            // Imagem 100x100 RGBA gera ~40 KB de dados descomprimidos
+            // Ao codificar, deve particionar em chunks IDAT de até 32 KB cada
+            var pb = new PixelBuffer(100, 100);
+            for (int y = 0; y < 100; y++)
+            {
+                for (int x = 0; x < 100; x++)
+                {
+                    pb.SetPixel(x, y, new PixelColor((byte)x, (byte)y, 100, 255));
+                }
+            }
+
+            byte[] pngBytes = PngEncoder.Encode(pb, true);
+
+            // Inspeciona os chunks do arquivo gerado
+            int idatCount = 0;
+            using (var ms = new MemoryStream(pngBytes))
+            {
+                byte[] sig = new byte[8];
+                ms.Read(sig, 0, 8);
+
+                PngChunk chunk;
+                while ((chunk = PngChunk.Read(ms)) != null)
+                {
+                    if (chunk.Type == "IDAT")
+                    {
+                        idatCount++;
+                        Assert(chunk.Data.Length <= 32 * 1024, "Cada chunk IDAT não deve ultrapassar 32 KB");
+                    }
+                }
+            }
+
+            Assert(idatCount >= 2, string.Format("Encoder deve gerar múltiplos chunks IDAT para imagem de ~40 KB (gerados: {0})", idatCount));
+
+            // Decodifica e verifica fidelidade
+            PixelBuffer decoded = PngDecoder.Decode(pngBytes);
+            AssertEqual(100, decoded.Width, "Width pós-chunking");
+            AssertEqual(100, decoded.Height, "Height pós-chunking");
+            AssertEqual(pb.GetPixel(50, 50), decoded.GetPixel(50, 50), "Pixel fidelity pós multi-chunk IDAT");
+        }
+
+        private static void Test_Hardening_Stream_Fragmentation_Resilience()
+        {
+            // Testa BMP com stream fragmentado (2 bytes por Read)
+            var pbBmp = new PixelBuffer(5, 5);
+            for (int y = 0; y < 5; y++)
+                for (int x = 0; x < 5; x++)
+                    pbBmp.SetPixel(x, y, new PixelColor((byte)(x * 50), (byte)(y * 50), 200, 255));
+
+            byte[] bmpBytes = BmpEncoder.Encode(pbBmp, 24);
+            using (var innerBmp = new MemoryStream(bmpBytes))
+            using (var fragBmp = new FragmentedStream(innerBmp, 2))
+            {
+                PixelBuffer decodedBmp = BmpDecoder.Decode(fragBmp);
+                AssertEqual(5, decodedBmp.Width, "BMP Width via FragmentedStream");
+                AssertEqual(5, decodedBmp.Height, "BMP Height via FragmentedStream");
+                AssertEqual(pbBmp.GetPixel(2, 2), decodedBmp.GetPixel(2, 2), "BMP Pixel (2,2) via FragmentedStream");
+            }
+
+            // Testa PNG com stream fragmentado (1 byte por Read!)
+            var pbPng = new PixelBuffer(4, 4);
+            for (int y = 0; y < 4; y++)
+                for (int x = 0; x < 4; x++)
+                    pbPng.SetPixel(x, y, new PixelColor((byte)(x * 60), (byte)(y * 60), 150, 200));
+
+            byte[] pngBytes = PngEncoder.Encode(pbPng, true);
+            using (var innerPng = new MemoryStream(pngBytes))
+            using (var fragPng = new FragmentedStream(innerPng, 1))
+            {
+                PixelBuffer decodedPng = PngDecoder.Decode(fragPng);
+                AssertEqual(4, decodedPng.Width, "PNG Width via FragmentedStream (1 byte/read)");
+                AssertEqual(4, decodedPng.Height, "PNG Height via FragmentedStream (1 byte/read)");
+                AssertEqual(pbPng.GetPixel(3, 3), decodedPng.GetPixel(3, 3), "PNG Pixel (3,3) via FragmentedStream");
+            }
+        }
+
+        private static void Test_Hardening_PixelBuffer_Crop_Overflow()
+        {
+            var pb = new PixelBuffer(10, 10);
+
+            bool threwXOverflow = false;
+            try
+            {
+                pb.Crop(int.MaxValue - 5, 0, 10, 10);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                threwXOverflow = true;
+            }
+            Assert(threwXOverflow, "Crop com x próximo a int.MaxValue deve lançar ArgumentOutOfRangeException");
+
+            bool threwYOverflow = false;
+            try
+            {
+                pb.Crop(0, int.MaxValue - 5, 10, 10);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                threwYOverflow = true;
+            }
+            Assert(threwYOverflow, "Crop com y próximo a int.MaxValue deve lançar ArgumentOutOfRangeException");
+        }
+
+        private static void Test_Hardening_Deflate_Lz77_Distance_Underflow()
+        {
+            // Cria um fluxo DEFLATE onde o primeiro símbolo é uma referência retroativa (Length 3, Distance 1)
+            // antes de emitir qualquer byte literal
+            var bitWriter = new SimpleBitWriter();
+            bitWriter.WriteBits(1, 1); // BFINAL = 1
+            bitWriter.WriteBits(1, 2); // BTYPE = 01 (Huffman Fixo)
+
+            // Símbolo 257 (comprimento 3) em Huffman fixo: código canônico 1, 7 bits '0000001'
+            bitWriter.WriteHuffman(1, 7);
+
+            // Símbolo de distância 0 (distância 1): 5 bits '00000'
+            bitWriter.WriteBits(0, 5);
+
+            byte[] deflateStream = bitWriter.ToArray();
+
+            bool threwDistanceUnderflow = false;
+            try
+            {
+                using (var ms = new MemoryStream(deflateStream))
+                {
+                    DeflateDecompressor.Decompress(ms, 1024);
+                }
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("Distância LZ77") || ex.Message.Contains("antes do início do fluxo"))
+                {
+                    threwDistanceUnderflow = true;
+                }
+            }
+            Assert(threwDistanceUnderflow, "Distância LZ77 anterior ao início do fluxo deve lançar CorruptDataException");
+        }
+
+        private static void Test_Hardening_Deflate_Dynamic_Repeat_Overflow()
+        {
+            // Constrói cabeçalho dinâmico DEFLATE com código de repetição 18 estourando totalCodes
+            var bitWriter = new SimpleBitWriter();
+            bitWriter.WriteBits(1, 1); // BFINAL = 1
+            bitWriter.WriteBits(2, 2); // BTYPE = 10 (Huffman Dinâmico)
+
+            // HLIT = 0 (257 literais), HDIST = 0 (1 distância) -> totalCodes = 258
+            bitWriter.WriteBits(0, 5);
+            bitWriter.WriteBits(0, 5);
+            // HCLEN = 1 (5 comprimentos para clLengths: 16, 17, 18, 0, 8)
+            bitWriter.WriteBits(1, 4);
+
+            // 5 comprimentos de 3 bits cada:
+            // 16: len 0 (3 bits: 0)
+            bitWriter.WriteBits(0, 3);
+            // 17: len 0 (3 bits: 0)
+            bitWriter.WriteBits(0, 3);
+            // 18: len 1 (código '1' porque símbolo 0 vem antes no vetor e recebe '0')
+            bitWriter.WriteBits(1, 3);
+            // 0: len 1 (código '0')
+            bitWriter.WriteBits(1, 3);
+            // 8: len 0
+            bitWriter.WriteBits(0, 3);
+
+            // Agora escrevemos os códigos de comprimento para literais/distâncias:
+            // Código 18 (bit '1') com 7 bits de repetição (valor 127 -> repete 11 + 127 = 138 zeros)
+            bitWriter.WriteBits(1, 1);
+            bitWriter.WriteBits(127, 7);
+
+            // Código 18 novamente: repete mais 138 zeros -> total 276 > 258!
+            bitWriter.WriteBits(1, 1);
+            bitWriter.WriteBits(127, 7);
+
+            byte[] deflateStream = bitWriter.ToArray();
+
+            bool threwRepeatOverflow = false;
+            try
+            {
+                using (var ms = new MemoryStream(deflateStream))
+                {
+                    DeflateDecompressor.Decompress(ms, 1024);
+                }
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("ultrapassa a quantidade total de comprimentos"))
+                {
+                    threwRepeatOverflow = true;
+                }
+            }
+            Assert(threwRepeatOverflow, "Código de repetição DEFLATE estourando totalCodes deve lançar CorruptDataException");
+        }
+
+        private static void Test_Hardening_Huffman_Oversubscribed_Tree()
+        {
+            // Três símbolos de comprimento 1 violam Kraft: 1/2 + 1/2 + 1/2 = 1.5 > 1
+            int[] codeLengths = new int[] { 1, 1, 1 };
+
+            bool threwOversubscribed = false;
+            try
+            {
+                HuffmanTree.Build(codeLengths);
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("sobre-subscrita") || ex.Message.Contains("inválida"))
+                {
+                    threwOversubscribed = true;
+                }
+            }
+            Assert(threwOversubscribed, "Árvore de Huffman sobre-subscrita deve lançar CorruptDataException");
+        }
+
+        private static void Test_Hardening_Bmp_NonSeekable_Stream()
+        {
+            var pb = new PixelBuffer(4, 4);
+            for (int y = 0; y < 4; y++)
+                for (int x = 0; x < 4; x++)
+                    pb.SetPixel(x, y, new PixelColor((byte)(x * 50), 120, (byte)(y * 50), 255));
+
+            byte[] bmpBytes = BmpEncoder.Encode(pb, 24);
+
+            using (var inner = new MemoryStream(bmpBytes))
+            using (var nonSeekable = new NonSeekableStream(inner))
+            {
+                PixelBuffer decoded = BmpDecoder.Decode(nonSeekable);
+                AssertEqual(4, decoded.Width, "Decodificação BMP em stream não-seekable");
+                AssertEqual(4, decoded.Height, "Decodificação BMP em stream não-seekable");
+                AssertEqual(pb.GetPixel(1, 1), decoded.GetPixel(1, 1), "Pixel fidelity em BMP não-seekable");
+            }
+        }
+
+        private static void Test_Hardening_Zlib_Trailing_Garbage()
+        {
+            byte[] raw = new byte[] { 10, 20, 30, 40, 50 };
+            byte[] compressed = ZlibStream.Compress(raw);
+
+            // Anexa lixo espúrio no final
+            byte[] corrupt = new byte[compressed.Length + 1];
+            Buffer.BlockCopy(compressed, 0, corrupt, 0, compressed.Length);
+            corrupt[corrupt.Length - 1] = 0xAA;
+
+            bool threwTrailing = false;
+            try
+            {
+                ZlibStream.Decompress(corrupt);
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("espúrios") || ex.Message.Contains("término"))
+                {
+                    threwTrailing = true;
+                }
+            }
+            Assert(threwTrailing, "ZLIB com bytes espúrios após Adler-32 deve lançar CorruptDataException");
+        }
+
+        #endregion
 
         #endregion
 

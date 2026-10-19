@@ -113,12 +113,23 @@ O motor rejeita deliberadamente variantes não implementadas, emitindo exceçõe
 
 ---
 
-## 5. Limites de Segurança
+## 5. Limites de Segurança e Proteções de Hardening
 
-- **Dimensão Máxima por Eixo:** 16.384 pixels.
-- **Contagem Máxima de Pixels:** 64 Megapixels (~256 MB em buffer RGBA).
-- **Tamanho Máximo de Arquivo de Imagem:** 250 MB.
-- **Tamanho Máximo por Chunk PNG:** 64 MB (proteção contra ataques DoS de alocação de chunks gigantes).
+- **Dimensão Máxima por Eixo:** 16.384 pixels (`MaxImageDimension`).
+- **Contagem Máxima de Pixels:** 64 Megapixels (`MaxImagePixelCount` = 67.108.864 pixels, ~256 MB em buffer RGBA).
+- **Tamanho Máximo de Arquivo de Imagem:** 250 MB (`DefaultMaxImageFileSize` para arquivos no disco ou em fluxo de entrada).
+- **Teto Máximo de Raster Descomprimido:** ~268,44 MB (`MaxDecompressedRasterBytes` = $\text{MaxImagePixelCount} \times 4 + \text{MaxImageDimension}$), contemplando o byte de tipo de filtro por scanline em imagens até 16.384 linhas.
+- **Proteção Ativa contra Decompression Bombs (Zip Bombs):**
+  - O `PngDecoder` calcula de forma prévia e estrita os bytes necessários para o raster através de `SecurityLimits.CalculateExpectedScanlineBytes(width, height, bytesPerPixel)`.
+  - Esse total esperado é repassado ao `ZlibStream.Decompress` como teto máximo de descompressão (`maxOutputBytes`), impedindo que payloads maliciosos altamente comprimidos expandam memória descontroladamente para além do necessário para as dimensões declaradas. Fluxos anômalos são abortados imediatamente com `ResourceLimitException`.
+- **Particionamento de Chunks IDAT na Codificação:**
+  - O `PngEncoder` particiona o fluxo comprimido ZLIB em chunks `IDAT` consecutivos de no máximo 32 KB (32.768 bytes), garantindo conformidade com a recomendação da ISO/IEC 15948 e eliminando chunks monolíticos gigantes.
+- **Tamanho Máximo por Chunk PNG:** 64 MB (`MaxChunkSize` em `PngChunk.cs`).
+- **Resiliência a Fluxos Fragmentados e Não-Seekable:**
+  - Leitura contínua em laço via `StreamUtils.ReadExactOrThrow`, garantindo que streams lentos, de rede ou fragmentados não disparem falsos erros de integridade.
+  - Navegação em streams sem alocação de buffers arbitrários via `StreamUtils.SkipBytes` (buffer pequeno fixo de 4 KB em streams não-navegáveis).
+- **Proteção Contra Overflow em Recorte:**
+  - `PixelBuffer.Crop` utiliza validação por subtração (`x > _width - width`) imune a wrap-around aritmético em valores elevados de coordenadas e lança `ArgumentOutOfRangeException`.
 - **Proteção contra sobrescrita:** `SafeFileWriter` com sufixo incremental determinístico `(1)`, `(2)`, etc.
 
 ---

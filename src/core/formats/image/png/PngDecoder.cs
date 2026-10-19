@@ -115,17 +115,18 @@ namespace Lodino.Core.Formats.Image.Png
                     throw new CorruptDataException("Arquivo PNG não contém nenhum chunk 'IDAT' com dados de imagem.");
                 }
 
-                // 4. Descompressão do fluxo ZLIB acumulado
-                byte[] compressedIdat = idatStream.ToArray();
-                byte[] decompressed = ZlibStream.Decompress(compressedIdat, SecurityLimits.DefaultMaxImageFileSize);
-
-                // 5. Validação do tamanho descomprimido esperado
+                // 4. Cálculo prévio estrito dos limites de scanlines e descompressão segura contra Decompression Bombs
                 int width = header.Width;
                 int height = header.Height;
                 int bytesPerPixel = header.BytesPerPixel;
-                int scanlineRawLength = width * bytesPerPixel;
-                int expectedTotalBytes = height * (1 + scanlineRawLength);
+                int scanlineRawLength = checked(width * bytesPerPixel);
+                long expectedTotalBytesLong = SecurityLimits.CalculateExpectedScanlineBytes(width, height, bytesPerPixel);
+                int expectedTotalBytes = checked((int)expectedTotalBytesLong);
 
+                byte[] compressedIdat = idatStream.ToArray();
+                byte[] decompressed = ZlibStream.Decompress(compressedIdat, expectedTotalBytes);
+
+                // 5. Validação da integridade de tamanho do fluxo descomprimido
                 if (decompressed.Length != expectedTotalBytes)
                 {
                     throw new CorruptDataException(string.Format(

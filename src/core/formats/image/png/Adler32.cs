@@ -9,7 +9,7 @@ namespace Lodino.Core.Formats.Image.Png
     public static class Adler32
     {
         private const uint ModAdler = 65521;
-        private const int MaxAccumulatedBytes = 5552;
+        private const int MaxAccumulatedBytes = 5550; // Teto matemático rigoroso para s2 nunca exceder uint.MaxValue
 
         public static uint Calculate(byte[] buffer, int offset, int count)
         {
@@ -19,7 +19,7 @@ namespace Lodino.Core.Formats.Image.Png
         public static uint Update(uint currentAdler, byte[] buffer, int offset, int count)
         {
             if (buffer == null) throw new ArgumentNullException("buffer");
-            if (offset < 0 || count < 0 || offset + count > buffer.Length)
+            if (offset < 0 || count < 0 || count > buffer.Length - offset)
             {
                 throw new ArgumentOutOfRangeException("Intervalo de buffer inválido.");
             }
@@ -30,19 +30,22 @@ namespace Lodino.Core.Formats.Image.Png
             int remaining = count;
             int currentOffset = offset;
 
-            while (remaining > 0)
+            unchecked
             {
-                int chunk = remaining > MaxAccumulatedBytes ? MaxAccumulatedBytes : remaining;
-                remaining -= chunk;
-
-                for (int i = 0; i < chunk; i++)
+                while (remaining > 0)
                 {
-                    s1 += buffer[currentOffset++];
-                    s2 += s1;
-                }
+                    int chunk = remaining > MaxAccumulatedBytes ? MaxAccumulatedBytes : remaining;
+                    remaining -= chunk;
 
-                s1 %= ModAdler;
-                s2 %= ModAdler;
+                    for (int i = 0; i < chunk; i++)
+                    {
+                        s1 += buffer[currentOffset++];
+                        s2 += s1;
+                    }
+
+                    s1 %= ModAdler;
+                    s2 %= ModAdler;
+                }
             }
 
             return (s2 << 16) | s1;

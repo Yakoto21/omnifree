@@ -15,6 +15,33 @@ namespace Lodino.Core.Safety
         public const int MaxImageDimension = 16384;
         public const long MaxImagePixelCount = 64 * 1024 * 1024; // 64 Megapixels (~256 MB em RGBA)
         public const long DefaultMaxImageFileSize = 250 * 1024 * 1024; // 250 MB
+        public const long MaxDecompressedRasterBytes = (long)MaxImagePixelCount * 4 + MaxImageDimension; // ~268.44 MB (64 MP RGBA + 1 byte filter per scanline)
+
+        public static long CalculateExpectedScanlineBytes(int width, int height, int bytesPerPixel)
+        {
+            AssertImageDimensions(width, height);
+            if (bytesPerPixel <= 0 || bytesPerPixel > 4)
+            {
+                throw new ArgumentOutOfRangeException("bytesPerPixel", "Bytes por pixel devem estar entre 1 e 4.");
+            }
+
+            checked
+            {
+                // Cada scanline contém 1 byte de tipo de filtro + (width * bytesPerPixel)
+                long scanlineBytes = (long)width * bytesPerPixel + 1;
+                long totalBytes = scanlineBytes * height;
+
+                if (totalBytes > MaxDecompressedRasterBytes)
+                {
+                    throw new ResourceLimitException(string.Format(
+                        "Tamanho de raster descomprimido ({0:N0} bytes) excede o teto de segurança permitido de {1:N0} bytes.",
+                        totalBytes, MaxDecompressedRasterBytes));
+                }
+
+                return totalBytes;
+            }
+        }
+
 
         public static void AssertFileSize(long length, long maxBytes = DefaultMaxDataFileSize)
         {

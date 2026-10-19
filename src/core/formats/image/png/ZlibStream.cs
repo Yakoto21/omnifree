@@ -64,11 +64,8 @@ namespace Lodino.Core.Formats.Image.Png
 
             // 3. Verificação do Adler-32 final (4 bytes, Big-Endian)
             byte[] adlerBytes = new byte[4];
-            int read = stream.Read(adlerBytes, 0, 4);
-            if (read < 4)
-            {
-                throw new CorruptDataException("Checksum Adler-32 ausente ou truncado no final do fluxo ZLIB.");
-            }
+            Lodino.Core.IO.StreamUtils.ReadExactOrThrow(stream, adlerBytes, 0, 4,
+                "Checksum Adler-32 ausente ou truncado no final do fluxo ZLIB.");
 
             uint expectedAdler = ((uint)adlerBytes[0] << 24) |
                                  ((uint)adlerBytes[1] << 16) |
@@ -82,6 +79,11 @@ namespace Lodino.Core.Formats.Image.Png
                 throw new CorruptDataException(string.Format(
                     "Falha de integridade ZLIB: Adler-32 calculado (0x{0:X8}) não coincide com o esperado (0x{1:X8}).",
                     actualAdler, expectedAdler));
+            }
+
+            if (stream.ReadByte() != -1)
+            {
+                throw new CorruptDataException("Dados espúrios detectados após o término do fluxo ZLIB.");
             }
 
             return decompressed;

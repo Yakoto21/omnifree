@@ -45,11 +45,8 @@ namespace Lodino.Core.Formats.Image.Png
             if (stream == null) throw new ArgumentNullException("stream");
 
             byte[] sig = new byte[8];
-            int read = stream.Read(sig, 0, 8);
-            if (read < 8)
-            {
-                throw new CorruptDataException("Arquivo truncado ou menor que a assinatura padrão PNG (8 bytes).");
-            }
+            Lodino.Core.IO.StreamUtils.ReadExactOrThrow(stream, sig, 0, 8,
+                "Arquivo truncado ou menor que a assinatura padrão PNG (8 bytes).");
 
             for (int i = 0; i < 8; i++)
             {

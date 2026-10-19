@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using Lodino.Core.Errors;
+using Lodino.Core.IO;
+using Lodino.Core.Safety;
 
 namespace Lodino.Core.Formats.Image
 {
@@ -31,13 +33,21 @@ namespace Lodino.Core.Formats.Image
             }
             catch (NotSupportedException)
             {
-                // Se o stream não suporta Length, copie para um MemoryStream seguro
+                // Se o stream não suporta Length, copie para um MemoryStream seguro com limite de tamanho
                 using (var ms = new MemoryStream())
                 {
                     byte[] copyBuf = new byte[8192];
                     int read;
+                    long totalCopied = 0;
                     while ((read = stream.Read(copyBuf, 0, copyBuf.Length)) > 0)
                     {
+                        totalCopied += read;
+                        if (totalCopied > SecurityLimits.DefaultMaxImageFileSize)
+                        {
+                            throw new ResourceLimitException(string.Format(
+                                "Fluxo de imagem excede o tamanho máximo permitido de {0:N0} bytes.",
+                                SecurityLimits.DefaultMaxImageFileSize));
+                        }
                         ms.Write(copyBuf, 0, read);
                     }
                     ms.Position = 0;
@@ -50,24 +60,23 @@ namespace Lodino.Core.Formats.Image
                 BmpHeader header = BmpHeader.Read(reader, streamLength);
 
                 // Posiciona o ponteiro no início exato dos dados de pixel (bfOffBits)
-                if (stream.Position != header.OffBits)
+                if (stream.CanSeek)
                 {
-                    if (stream.CanSeek)
+                    if (stream.Position != header.OffBits)
                     {
                         stream.Seek(header.OffBits, SeekOrigin.Begin);
                     }
-                    else
+                }
+                else
+                {
+                    if (header.OffBits < stream.Position)
                     {
-                        long bytesToSkip = header.OffBits - stream.Position;
-                        if (bytesToSkip > 0)
-                        {
-                            byte[] dummy = new byte[bytesToSkip];
-                            int read = stream.Read(dummy, 0, dummy.Length);
-                            if (read < bytesToSkip)
-                            {
-                                throw new CorruptDataException("Fim inesperado do fluxo ao buscar os dados de pixel.");
-                            }
-                        }
+                        throw new CorruptDataException("Deslocamento de dados do BMP precede a posição atual do fluxo não-navegável.");
+                    }
+                    long bytesToSkip = header.OffBits - stream.Position;
+                    if (bytesToSkip > 0)
+                    {
+                        StreamUtils.SkipBytes(stream, bytesToSkip, SecurityLimits.DefaultMaxImageFileSize);
                     }
                 }
 
@@ -90,17 +99,8 @@ namespace Lodino.Core.Formats.Image
                 {
                     int targetY = isTopDown ? i : (height - 1 - i);
 
-                    int bytesRead = 0;
-                    while (bytesRead < stride)
-                    {
-                        int n = stream.Read(rowBuffer, bytesRead, stride - bytesRead);
-                        if (n <= 0)
-                        {
-                            throw new CorruptDataException(string.Format(
-                                "Fim prematuro de arquivo na scanline {0} de {1} do BMP.", i, height));
-                        }
-                        bytesRead += n;
-                    }
+                    StreamUtils.ReadExactOrThrow(stream, rowBuffer, 0, stride,
+                        string.Format("Fim prematuro de arquivo na scanline {0} de {1} do BMP.", i, height));
 
                     int dstRowOffset = targetY * width * 4;
 
