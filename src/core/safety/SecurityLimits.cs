@@ -138,5 +138,49 @@ namespace Lodino.Core.Safety
                     memoryBytes, MaxAudioMemoryBytes));
             }
         }
+
+        public const long DefaultMaxZipFileSize = 500 * 1024 * 1024; // 500 MB
+        public const int MaxZipEntries = 10000; // 10.000 entradas por arquivo ZIP
+        public const long MaxZipEntrySize = 500 * 1024 * 1024; // 500 MB por entrada descompactada
+        public const long MaxZipTotalExtractedBytes = 1024 * 1024 * 1024; // 1 GB total extraído (proteção contra Zip Bomb)
+        public const int MaxZipCommentLength = 65535; // 64 KB limite de comentário ZIP
+
+        public static void AssertZipEntryCount(int entryCount)
+        {
+            if (entryCount < 0)
+            {
+                throw new CorruptDataException("Contagem de entradas do arquivo ZIP não pode ser negativa.");
+            }
+            if (entryCount > MaxZipEntries)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Contagem de entradas do arquivo ZIP ({0:N0}) excede o limite máximo permitido de {1:N0} entradas.",
+                    entryCount, MaxZipEntries));
+            }
+        }
+
+        public static void AssertZipEntrySize(long uncompressedSize)
+        {
+            if (uncompressedSize < 0)
+            {
+                throw new CorruptDataException("Tamanho descompactado de entrada ZIP não pode ser negativo.");
+            }
+            if (uncompressedSize > MaxZipEntrySize)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Tamanho descompactado da entrada ZIP ({0:N0} bytes) excede o limite máximo seguro de {1:N0} bytes.",
+                    uncompressedSize, MaxZipEntrySize));
+            }
+        }
+
+        public static void AssertZipTotalExtracted(long accumulatedBytes)
+        {
+            if (accumulatedBytes > MaxZipTotalExtractedBytes)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Total acumulado de bytes extraídos do arquivo ZIP ({0:N0} bytes) excede o teto de segurança contra Zip Bomb de {1:N0} bytes.",
+                    accumulatedBytes, MaxZipTotalExtractedBytes));
+            }
+        }
     }
 }

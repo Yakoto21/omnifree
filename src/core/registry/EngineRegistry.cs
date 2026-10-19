@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Lodino.Core.Api;
 using Lodino.Core.Errors;
+using Lodino.Core.Formats.Archive.Zip;
 using Lodino.Core.Formats.Audio.Wav;
 using Lodino.Core.Formats.Data;
 using Lodino.Core.Formats.Image;
@@ -20,6 +21,7 @@ namespace Lodino.Core.Registry
             registry.Register(new PngEngine());
             registry.Register(new JpegEngine());
             registry.Register(new WavEngine());
+            registry.Register(new ZipEngine());
             return registry;
         });
 

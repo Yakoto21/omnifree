@@ -12,6 +12,7 @@ using Lodino.Core.Formats.Image.Png;
 using Lodino.Core.IO;
 using Lodino.Core.Registry;
 using Lodino.Core.Safety;
+using Lodino.Core.Formats.Archive.Zip;
 using System.Threading;
 using Lodino.Desktop;
 
@@ -267,6 +268,27 @@ namespace Lodino.Tests
             RunTest("HARDENING WAV: Suporte a perfil estúdio 96kHz 24-bit 2 min (~66 MB) (D-WAV-07)", Test_Wav_StudioProfile_96kHz_24Bit_Over64MB_Accepted);
             RunTest("HARDENING WAV: Rejeição de chunk 'data' > 500 MB antes da alocação (D-WAV-07)", Test_Wav_Security_ChunkData_ExceedsMaxAudioFileSize_Rejection);
             RunTest("HARDENING WAV: Rejeição de chunk 'data' com tamanho desalinhado de BlockAlign (D-WAV-07)", Test_Wav_Security_ChunkData_MisalignedBlockAlign_Rejection);
+
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE CORE — MOTOR PILOTO 4            ");
+            Console.WriteLine("  Módulo: Motor Nativo de Contêineres ZIP Próprio");
+            Console.WriteLine("=================================================\n");
+
+            RunTest("ZIP: Criação e leitura de arquivo Store (Sem compressão) com múltiplos arquivos", Test_Zip_Create_And_Read_Store_MultipleEntries);
+            RunTest("ZIP: Criação e leitura de arquivo Deflate Optimal (LZ77 + Fixed Huffman)", Test_Zip_Create_And_Read_Deflate_Optimal_Lz77);
+            RunTest("ZIP: Criação e leitura de arquivo vazio e diretórios explícitos", Test_Zip_EmptyArchive_And_Directories);
+            RunTest("ZIP: Nomes de arquivo em UTF-8 (acentos e caracteres especiais) e comentários", Test_Zip_UnicodeFilenames_And_Comments);
+            RunTest("ZIP: Subdiretórios aninhados e empacotamento recursivo de diretório", Test_Zip_Subdirectories_And_RecursivePackaging);
+            RunTest("ZIP (Segurança): Bloqueio estrito de Zip Slip / Path Traversal (.. e streams NTFS)", Test_Zip_Security_ZipSlip_PathTraversal_Rejection);
+            RunTest("ZIP (Segurança): Detecção e rejeição de corrupção de CRC-32 na extração", Test_Zip_Security_Crc32Mismatch_Rejection);
+            RunTest("ZIP (Segurança): Rejeição de arquivo truncado e assinatura mágica inválida", Test_Zip_Security_TruncatedArchive_And_InvalidSignature);
+            RunTest("ZIP (Segurança): Rejeição explícita de arquivos criptografados (Bit 0)", Test_Zip_Security_EncryptedArchive_Rejection);
+            RunTest("ZIP (Segurança): Defesa contra Zip Bomb (Teto MaxZipTotalExtractedBytes)", Test_Zip_Security_ZipBomb_TotalExtractedLimit_Rejection);
+            RunTest("ZIP (Segurança): Defesa contra número excessivo de entradas (MaxZipEntries)", Test_Zip_Security_ExcessiveEntries_Rejection);
+            RunTest("ZIP (Segurança): Rejeição explícita e segura de arquivos ZIP64", Test_Zip_Security_Zip64_Rejection);
+            RunTest("ZIP (Engine): Inspeção completa de contêiner e registro no EngineRegistry", Test_Zip_Engine_Inspect_And_Registry_Resolution);
+            RunTest("ZIP (Engine): Pipeline de conversão ponta a ponta (Empacotamento e Extração)", Test_Zip_Engine_ConvertPipeline_ZipAndUnzip);
+            RunTest("ZIP (Interoperabilidade): Descompressão cruzada de stream DEFLATE padrão", Test_Zip_External_Interoperability_DeflateStream);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -6047,6 +6069,616 @@ namespace Lodino.Tests
                 Assert(threwAlign, "Deve rejeitar chunk 'data' desalinhado com CorruptDataException (D-WAV-07)");
             }
         }
+
+        #region Casos de Teste ZIP
+
+        private static void Test_Zip_Create_And_Read_Store_MultipleEntries()
+        {
+            byte[] zipData;
+            byte[] file1 = Encoding.UTF8.GetBytes("Olá, Lodino ZIP Store!");
+            byte[] file2 = new byte[1024];
+            for (int i = 0; i < file2.Length; i++) file2[i] = (byte)(i & 0xFF);
+
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                    writer.AddEntry("hello.txt", file1, ZipCompressionLevel.Store);
+                    writer.AddEntry("data.bin", file2, ZipCompressionLevel.Store);
+                }
+                zipData = ms.ToArray();
+            }
+
+            Assert(zipData.Length > 0, "ZIP gerado não deve ser vazio");
+
+            using (var ms = new MemoryStream(zipData))
+            using (var reader = new ZipReader(ms))
+            {
+                AssertEqual(2, reader.Entries.Count, "Entries.Count");
+                AssertEqual("hello.txt", reader.Entries[0].Name, "Entry[0].Name");
+                AssertEqual(ZipCompressionMethod.Store, reader.Entries[0].Method, "Entry[0].Method");
+                AssertEqual((long)file1.Length, reader.Entries[0].UncompressedSize, "Entry[0].UncompressedSize");
+                AssertEqual((long)file1.Length, reader.Entries[0].CompressedSize, "Entry[0].CompressedSize");
+
+                byte[] read1 = reader.ReadEntryBytes(reader.Entries[0]);
+                AssertEqual(Encoding.UTF8.GetString(file1), Encoding.UTF8.GetString(read1), "Conteúdo de hello.txt");
+
+                byte[] read2 = reader.ReadEntryBytes(reader.Entries[1]);
+                AssertEqual(file2.Length, read2.Length, "Tamanho de data.bin");
+                for (int i = 0; i < file2.Length; i++)
+                {
+                    if (read2[i] != file2[i])
+                    {
+                        throw new Exception("Bytes de data.bin não conferem na posição " + i);
+                    }
+                }
+            }
+        }
+
+        private static void Test_Zip_Create_And_Read_Deflate_Optimal_Lz77()
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < 150; i++)
+            {
+                sb.Append("Lodino ZIP engine provides fast LZ77 match finder and Fixed Huffman encoding! Repetição: ");
+                sb.Append(i);
+                sb.Append("\r\n");
+            }
+            byte[] uncompressed = Encoding.UTF8.GetBytes(sb.ToString());
+
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                    writer.AddEntry("story.txt", uncompressed, ZipCompressionLevel.Optimal);
+                }
+                zipData = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(zipData))
+            using (var reader = new ZipReader(ms))
+            {
+                AssertEqual(1, reader.Entries.Count, "Entries.Count");
+                var entry = reader.Entries[0];
+                AssertEqual("story.txt", entry.Name, "Name");
+                AssertEqual(ZipCompressionMethod.Deflate, entry.Method, "Method");
+                AssertEqual((long)uncompressed.Length, entry.UncompressedSize, "UncompressedSize");
+                Assert(entry.CompressedSize < entry.UncompressedSize / 3, "Tamanho comprimido deve ser significativamente menor que descompactado com LZ77");
+
+                byte[] decompressed = reader.ReadEntryBytes(entry);
+                AssertEqual(uncompressed.Length, decompressed.Length, "Tamanho descomprimido");
+                for (int i = 0; i < uncompressed.Length; i++)
+                {
+                    if (uncompressed[i] != decompressed[i])
+                    {
+                        throw new Exception("Mismatch na descompressão do LZ77 na posição " + i);
+                    }
+                }
+            }
+        }
+
+        private static void Test_Zip_EmptyArchive_And_Directories()
+        {
+            byte[] emptyZip;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                }
+                emptyZip = ms.ToArray();
+            }
+
+            AssertEqual(22, emptyZip.Length, "Arquivo ZIP vazio deve conter exatamente o registro EOCD de 22 bytes");
+
+            using (var ms = new MemoryStream(emptyZip))
+            using (var reader = new ZipReader(ms))
+            {
+                AssertEqual(0, reader.Entries.Count, "ZIP vazio deve ter 0 entradas");
+            }
+
+            byte[] dirZip;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                    writer.AddDirectory("docs/");
+                    writer.AddDirectory("docs/sub/");
+                    writer.AddEntry("docs/sub/readme.txt", Encoding.UTF8.GetBytes("Manual"), ZipCompressionLevel.Store);
+                }
+                dirZip = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(dirZip))
+            using (var reader = new ZipReader(ms))
+            {
+                AssertEqual(3, reader.Entries.Count, "Total de entradas (2 pastas + 1 arquivo)");
+                Assert(reader.Entries[0].IsDirectory, "docs/ deve ser diretório");
+                AssertEqual(0L, (long)reader.Entries[0].UncompressedSize, "Diretório deve ter tamanho 0");
+                Assert(reader.Entries[1].IsDirectory, "docs/sub/ deve ser diretório");
+                Assert(!reader.Entries[2].IsDirectory, "readme.txt não deve ser diretório");
+            }
+        }
+
+        private static void Test_Zip_UnicodeFilenames_And_Comments()
+        {
+            string fileName1 = "relatório_café_2026.txt";
+            string fileName2 = "日本語_documento.json";
+            string archiveComment = "Arquivo criado pelo motor Lodino 2026.";
+            string entryComment = "Comentário da entrada 1";
+
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                    writer.Comment = archiveComment;
+                    writer.AddEntry(fileName1, Encoding.UTF8.GetBytes("Conteúdo 1"), ZipCompressionLevel.Optimal, entryComment);
+                    writer.AddEntry(fileName2, Encoding.UTF8.GetBytes("{\"ok\":true}"), ZipCompressionLevel.Store);
+                }
+                zipData = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(zipData))
+            using (var reader = new ZipReader(ms))
+            {
+                AssertEqual(archiveComment, reader.Comment, "Comentário do arquivo");
+                AssertEqual(2, reader.Entries.Count, "Entries.Count");
+                AssertEqual(fileName1, reader.Entries[0].Name, "Nome Unicode 1");
+                AssertEqual(entryComment, reader.Entries[0].Comment, "Comentário de entrada 1");
+                AssertEqual(fileName2, reader.Entries[1].Name, "Nome Unicode 2");
+
+                byte[] b1 = reader.ReadEntryBytes(reader.Entries[0]);
+                AssertEqual("Conteúdo 1", Encoding.UTF8.GetString(b1), "Conteúdo 1");
+                byte[] b2 = reader.ReadEntryBytes(reader.Entries[1]);
+                AssertEqual("{\"ok\":true}", Encoding.UTF8.GetString(b2), "Conteúdo 2");
+            }
+        }
+
+        private static void Test_Zip_Subdirectories_And_RecursivePackaging()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_zip_test_" + Guid.NewGuid().ToString("N"));
+            string zipFile = Path.Combine(Path.GetTempPath(), "lodino_zip_out_" + Guid.NewGuid().ToString("N") + ".zip");
+            string extractDir = Path.Combine(Path.GetTempPath(), "lodino_zip_ext_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(tempDir);
+                File.WriteAllText(Path.Combine(tempDir, "root.txt"), "Root content", Encoding.UTF8);
+
+                string sub1 = Path.Combine(tempDir, "sub1");
+                Directory.CreateDirectory(sub1);
+                File.WriteAllText(Path.Combine(sub1, "child.txt"), "Child content", Encoding.UTF8);
+
+                string sub2 = Path.Combine(sub1, "nested");
+                Directory.CreateDirectory(sub2);
+                File.WriteAllText(Path.Combine(sub2, "deep.txt"), "Deep content", Encoding.UTF8);
+
+                ZipWriter.CreateFromDirectory(tempDir, zipFile, true, ZipCompressionLevel.Optimal);
+
+                Assert(File.Exists(zipFile), "Arquivo ZIP deve ter sido criado em disco");
+
+                ZipReader.ExtractToDirectory(zipFile, extractDir, true);
+
+                Assert(File.Exists(Path.Combine(extractDir, "root.txt")), "root.txt deve ter sido extraído");
+                AssertEqual("Root content", File.ReadAllText(Path.Combine(extractDir, "root.txt")), "Conteúdo root.txt");
+
+                Assert(File.Exists(Path.Combine(extractDir, "sub1", "child.txt")), "sub1/child.txt extraído");
+                AssertEqual("Child content", File.ReadAllText(Path.Combine(extractDir, "sub1", "child.txt")), "Conteúdo child.txt");
+
+                Assert(File.Exists(Path.Combine(extractDir, "sub1", "nested", "deep.txt")), "sub1/nested/deep.txt extraído");
+                AssertEqual("Deep content", File.ReadAllText(Path.Combine(extractDir, "sub1", "nested", "deep.txt")), "Conteúdo deep.txt");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+                if (File.Exists(zipFile)) File.Delete(zipFile);
+                if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
+            }
+        }
+
+        private static void Test_Zip_Security_ZipSlip_PathTraversal_Rejection()
+        {
+            bool threw1 = false;
+            try
+            {
+                ZipSecurity.ValidateSafeRelativePath("../../evil.bat");
+            }
+            catch (PathSecurityException)
+            {
+                threw1 = true;
+            }
+            Assert(threw1, "ZipSecurity deve lançar PathSecurityException para caminhos com '..'");
+
+            bool threw2 = false;
+            try
+            {
+                ZipSecurity.ValidateSafeRelativePath("normal.txt:stream");
+            }
+            catch (PathSecurityException)
+            {
+                threw2 = true;
+            }
+            Assert(threw2, "ZipSecurity deve lançar PathSecurityException para caminhos com ':'");
+
+            bool threw3 = false;
+            try
+            {
+                ZipSecurity.ValidateSafeRelativePath("C:/Windows/system32/cmd.exe");
+            }
+            catch (PathSecurityException)
+            {
+                threw3 = true;
+            }
+            Assert(threw3, "ZipSecurity deve lançar PathSecurityException para caminhos com unidade de disco");
+
+            bool threw4 = false;
+            try
+            {
+                ZipSecurity.GetSafeExtractionPath(@"C:\Destino", @"../../escape.txt");
+            }
+            catch (PathSecurityException)
+            {
+                threw4 = true;
+            }
+            Assert(threw4, "GetSafeExtractionPath deve lançar PathSecurityException se destino escapar da raiz");
+        }
+
+        private static void Test_Zip_Security_Crc32Mismatch_Rejection()
+        {
+            byte[] fileData = Encoding.UTF8.GetBytes("Integrity check content");
+            byte[] zipData;
+
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                    writer.AddEntry("test.txt", fileData, ZipCompressionLevel.Store);
+                }
+                zipData = ms.ToArray();
+            }
+
+            int payloadOffset = 30 + 8;
+            zipData[payloadOffset] = (byte)(zipData[payloadOffset] ^ 0xFF);
+
+            using (var ms = new MemoryStream(zipData))
+            using (var reader = new ZipReader(ms))
+            {
+                bool threw = false;
+                try
+                {
+                    reader.ReadEntryBytes(reader.Entries[0]);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("CRC-32"))
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Deve lançar CorruptDataException quando o CRC-32 não confere");
+            }
+        }
+
+        private static void Test_Zip_Security_TruncatedArchive_And_InvalidSignature()
+        {
+            bool threwShort = false;
+            try
+            {
+                using (var ms = new MemoryStream(new byte[] { 0x50, 0x4B, 0x05, 0x06 }))
+                using (var reader = new ZipReader(ms)) { }
+            }
+            catch (CorruptDataException)
+            {
+                threwShort = true;
+            }
+            Assert(threwShort, "Arquivo < 22 bytes deve lançar CorruptDataException");
+
+            bool threwNoEocd = false;
+            try
+            {
+                using (var ms = new MemoryStream(new byte[100]))
+                using (var reader = new ZipReader(ms)) { }
+            }
+            catch (CorruptDataException)
+            {
+                threwNoEocd = true;
+            }
+            Assert(threwNoEocd, "Arquivo sem assinatura EOCD deve lançar CorruptDataException");
+        }
+
+        private static void Test_Zip_Security_EncryptedArchive_Rejection()
+        {
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                    writer.AddEntry("doc.txt", Encoding.UTF8.GetBytes("Secret"), ZipCompressionLevel.Store);
+                }
+                zipData = ms.ToArray();
+            }
+
+            for (int i = 0; i < zipData.Length - 4; i++)
+            {
+                if (zipData[i] == 0x50 && zipData[i + 1] == 0x4B && zipData[i + 2] == 0x01 && zipData[i + 3] == 0x02)
+                {
+                    zipData[i + 8] |= 0x01; // Bit 0 = Encrypted
+                    break;
+                }
+            }
+
+            using (var ms = new MemoryStream(zipData))
+            {
+                bool threw = false;
+                try
+                {
+                    using (var reader = new ZipReader(ms))
+                    {
+                        reader.ReadEntryBytes(reader.Entries[0]);
+                    }
+                }
+                catch (UnsupportedFormatException ex)
+                {
+                    if (ex.Message.Contains("criptografia"))
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Arquivo com bit de criptografia ativo deve ser rejeitado com UnsupportedFormatException");
+            }
+        }
+
+        private static void Test_Zip_Security_ZipBomb_TotalExtractedLimit_Rejection()
+        {
+            bool threwTotal = false;
+            try
+            {
+                SecurityLimits.AssertZipTotalExtracted(SecurityLimits.MaxZipTotalExtractedBytes + 1024);
+            }
+            catch (ResourceLimitException ex)
+            {
+                if (ex.Message.Contains("excede o teto de segurança contra Zip Bomb"))
+                {
+                    threwTotal = true;
+                }
+            }
+            Assert(threwTotal, "Total acumulado acima de 1 GB deve lançar ResourceLimitException");
+
+            bool threwEntry = false;
+            try
+            {
+                SecurityLimits.AssertZipEntrySize(SecurityLimits.MaxZipEntrySize + 1024);
+            }
+            catch (ResourceLimitException ex)
+            {
+                if (ex.Message.Contains("excede o limite máximo seguro"))
+                {
+                    threwEntry = true;
+                }
+            }
+            Assert(threwEntry, "Entrada única descompactada acima de 500 MB deve lançar ResourceLimitException");
+        }
+
+        private static void Test_Zip_Security_ExcessiveEntries_Rejection()
+        {
+            byte[] fakeEocd;
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms);
+                w.Write(ZipConstants.EndOfCentralDirectorySignature);
+                w.Write((ushort)0);
+                w.Write((ushort)0);
+                w.Write((ushort)10001);
+                w.Write((ushort)10001);
+                w.Write((uint)0);
+                w.Write((uint)0);
+                w.Write((ushort)0);
+                fakeEocd = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(fakeEocd))
+            {
+                bool threw = false;
+                try
+                {
+                    using (var reader = new ZipReader(ms)) { }
+                }
+                catch (ResourceLimitException ex)
+                {
+                    if (ex.Message.Contains("excede o limite máximo permitido"))
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Deve rejeitar arquivo com mais de 10.000 entradas com ResourceLimitException");
+            }
+        }
+
+        private static void Test_Zip_Security_Zip64_Rejection()
+        {
+            byte[] fakeEocd;
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms);
+                w.Write(ZipConstants.EndOfCentralDirectorySignature);
+                w.Write((ushort)0);
+                w.Write((ushort)0);
+                w.Write(ZipConstants.Zip64Marker16);
+                w.Write(ZipConstants.Zip64Marker16);
+                w.Write((uint)100);
+                w.Write((uint)0);
+                w.Write((ushort)0);
+                fakeEocd = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(fakeEocd))
+            {
+                bool threw = false;
+                try
+                {
+                    using (var reader = new ZipReader(ms)) { }
+                }
+                catch (UnsupportedFormatException ex)
+                {
+                    if (ex.Message.Contains("ZIP64"))
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Deve rejeitar arquivo ZIP64 com UnsupportedFormatException");
+            }
+        }
+
+        private static void Test_Zip_Engine_Inspect_And_Registry_Resolution()
+        {
+            var registry = EngineRegistry.Default;
+            var engineZip = registry.Resolve("dir", "zip");
+            Assert(engineZip != null, "ZipEngine deve ser resolvido para rota dir -> zip");
+            AssertEqual("archive-zip", engineZip.EngineId, "EngineId");
+
+            var engineUnzip = registry.Resolve("zip", "dir");
+            Assert(engineUnzip != null, "ZipEngine deve ser resolvido para rota zip -> dir");
+
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, true))
+                {
+                    writer.AddEntry("item1.txt", Encoding.UTF8.GetBytes("Data 1"), ZipCompressionLevel.Store);
+                    writer.AddEntry("item2.txt", Encoding.UTF8.GetBytes("Data 2 with more text"), ZipCompressionLevel.Optimal);
+                }
+                zipData = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(zipData))
+            {
+                var info = engineZip.Inspect(ms, "test.zip");
+                Assert(info.IsSupported, "IsSupported deve ser true");
+                AssertEqual("zip", info.FormatId, "FormatId");
+                AssertEqual("2", info.Metadata["TotalEntries"], "TotalEntries");
+                AssertEqual("2", info.Metadata["FileCount"], "FileCount");
+                Assert(info.Metadata.ContainsKey("CompressionRatio"), "Metadata contém CompressionRatio");
+            }
+        }
+
+        private static void Test_Zip_Engine_ConvertPipeline_ZipAndUnzip()
+        {
+            var engine = new ZipEngine();
+            string tempDir = Path.Combine(Path.GetTempPath(), "pipe_src_" + Guid.NewGuid().ToString("N"));
+            string zipFile = Path.Combine(Path.GetTempPath(), "pipe_out_" + Guid.NewGuid().ToString("N") + ".zip");
+            string extDir = Path.Combine(Path.GetTempPath(), "pipe_ext_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(tempDir);
+                File.WriteAllText(Path.Combine(tempDir, "item.txt"), "Pipeline item data", Encoding.UTF8);
+
+                var reqZip = new ConvertRequest
+                {
+                    InputPath = tempDir,
+                    TargetFormat = "zip",
+                    OutputDirectory = Path.GetDirectoryName(zipFile),
+                    OutputFileName = Path.GetFileName(zipFile)
+                };
+                int zipProgress = 0;
+                var resZip = engine.Convert(reqZip, pct => { zipProgress = pct; });
+                AssertEqual("completed", resZip.Status, "Status da conversão dir -> zip");
+                AssertEqual(100, zipProgress, "Progresso da conversão dir -> zip");
+                Assert(File.Exists(resZip.OutputPath), "Arquivo zip gerado pelo pipeline deve existir");
+
+                var reqUnzip = new ConvertRequest
+                {
+                    InputPath = resZip.OutputPath,
+                    TargetFormat = "dir",
+                    OutputDirectory = extDir
+                };
+                int unzipProgress = 0;
+                var resUnzip = engine.Convert(reqUnzip, pct => { unzipProgress = pct; });
+                AssertEqual("completed", resUnzip.Status, "Status da conversão zip -> dir");
+                AssertEqual(100, unzipProgress, "Progresso da conversão zip -> dir");
+                Assert(File.Exists(Path.Combine(extDir, "item.txt")), "item.txt extraído com sucesso");
+                AssertEqual("Pipeline item data", File.ReadAllText(Path.Combine(extDir, "item.txt")), "Conteúdo idêntico");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+                if (File.Exists(zipFile)) File.Delete(zipFile);
+                if (Directory.Exists(extDir)) Directory.Delete(extDir, true);
+            }
+        }
+
+        private static void Test_Zip_External_Interoperability_DeflateStream()
+        {
+            byte[] original = Encoding.UTF8.GetBytes(
+                "Interoperability verification between Lodino pure C# DEFLATE compressor and standard RFC 1951 decoders. " +
+                "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore. " +
+                "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Repetição de padrões para teste de janela LZ77!");
+
+            // 1. Comprimir com Lodino DeflateCompressor
+            byte[] lodinoCompressed;
+            using (var src = new MemoryStream(original))
+            using (var dst = new MemoryStream())
+            {
+                DeflateCompressor.Compress(src, dst, ZipCompressionLevel.Optimal);
+                lodinoCompressed = dst.ToArray();
+            }
+
+            // 2. Descomprimir Lodino Deflate com System.IO.Compression.DeflateStream
+            byte[] dotNetDecompressed;
+            using (var src = new MemoryStream(lodinoCompressed))
+            using (var deflate = new System.IO.Compression.DeflateStream(src, System.IO.Compression.CompressionMode.Decompress))
+            using (var dst = new MemoryStream())
+            {
+                byte[] buf = new byte[512];
+                int read;
+                while ((read = deflate.Read(buf, 0, buf.Length)) > 0)
+                {
+                    dst.Write(buf, 0, read);
+                }
+                dotNetDecompressed = dst.ToArray();
+            }
+
+            AssertEqual(original.Length, dotNetDecompressed.Length, "DeflateStream dotNet deve ler todos os bytes");
+            for (int i = 0; i < original.Length; i++)
+            {
+                if (original[i] != dotNetDecompressed[i])
+                {
+                    throw new Exception("Mismatch na descompressão do DeflateStream dotNet na posição " + i);
+                }
+            }
+
+            // 3. Comprimir com System.IO.Compression.DeflateStream
+            byte[] dotNetCompressed;
+            using (var dst = new MemoryStream())
+            {
+                using (var deflate = new System.IO.Compression.DeflateStream(dst, System.IO.Compression.CompressionMode.Compress, true))
+                {
+                    deflate.Write(original, 0, original.Length);
+                }
+                dotNetCompressed = dst.ToArray();
+            }
+
+            // 4. Descomprimir dotNetCompressed com Lodino DeflateDecompressor (RFC 1951)
+            byte[] lodinoDecompressed;
+            using (var src = new MemoryStream(dotNetCompressed))
+            using (var dst = new MemoryStream())
+            {
+                Lodino.Core.Formats.Image.Png.DeflateDecompressor.Decompress(src, dst, original.Length);
+                lodinoDecompressed = dst.ToArray();
+            }
+
+            AssertEqual(original.Length, lodinoDecompressed.Length, "Lodino DeflateDecompressor deve ler todos os bytes gerados pelo .NET");
+            for (int i = 0; i < original.Length; i++)
+            {
+                if (original[i] != lodinoDecompressed[i])
+                {
+                    throw new Exception("Mismatch na descompressão pelo Lodino de stream gerado por DeflateStream na posição " + i);
+                }
+            }
+        }
+
+        #endregion
 
         #endregion
 

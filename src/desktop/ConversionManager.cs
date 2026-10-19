@@ -455,6 +455,7 @@ namespace Lodino.Desktop
                 case "ini": return "json";
                 case "wav":
                 case "wave": return "wav";
+                case "zip": return "extract";
                 default: return "png";
             }
         }

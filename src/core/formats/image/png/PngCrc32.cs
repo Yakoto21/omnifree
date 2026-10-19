@@ -1,71 +1,33 @@
 using System;
+using Lodino.Core.IO;
 
 namespace Lodino.Core.Formats.Image.Png
 {
     /// <summary>
-    /// Implementação original de CRC-32 (ISO 3309 / ITU-T V.42 / PNG standard).
-    /// Polinômio reverso: 0xEDB88320.
+    /// Implementação de compatibilidade do CRC-32 para PNG, delegando para o utilitário compartilhado Lodino.Core.IO.Crc32.
     /// </summary>
     public static class PngCrc32
     {
-        private static readonly uint[] CrcTable;
-
-        static PngCrc32()
-        {
-            CrcTable = new uint[256];
-            for (uint i = 0; i < 256; i++)
-            {
-                uint c = i;
-                for (int k = 0; k < 8; k++)
-                {
-                    if ((c & 1) != 0)
-                    {
-                        c = 0xEDB88320u ^ (c >> 1);
-                    }
-                    else
-                    {
-                        c = c >> 1;
-                    }
-                }
-                CrcTable[i] = c;
-            }
-        }
-
         public static uint Calculate(byte[] buffer, int offset, int count)
         {
-            return Update(0xFFFFFFFFu, buffer, offset, count) ^ 0xFFFFFFFFu;
+            return Crc32.Calculate(buffer, offset, count);
         }
 
         public static uint Calculate(string fourCc, byte[] data, int dataOffset, int dataCount)
         {
-            uint crc = 0xFFFFFFFFu;
+            uint crc = Crc32.InitialCrc;
             byte[] tagBytes = System.Text.Encoding.ASCII.GetBytes(fourCc);
-            crc = Update(crc, tagBytes, 0, tagBytes.Length);
+            crc = Crc32.Update(crc, tagBytes, 0, tagBytes.Length);
             if (data != null && dataCount > 0)
             {
-                crc = Update(crc, data, dataOffset, dataCount);
+                crc = Crc32.Update(crc, data, dataOffset, dataCount);
             }
-            return crc ^ 0xFFFFFFFFu;
+            return Crc32.Finalize(crc);
         }
 
         public static uint Update(uint currentCrc, byte[] buffer, int offset, int count)
         {
-            if (buffer == null) throw new ArgumentNullException("buffer");
-            if (offset < 0 || count < 0 || count > buffer.Length - offset)
-            {
-                throw new ArgumentOutOfRangeException("Intervalo de buffer inválido.");
-            }
-
-            unchecked
-            {
-                uint c = currentCrc;
-                for (int i = 0; i < count; i++)
-                {
-                    byte index = (byte)((c ^ buffer[offset + i]) & 0xFF);
-                    c = CrcTable[index] ^ (c >> 8);
-                }
-                return c;
-            }
+            return Crc32.Update(currentCrc, buffer, offset, count);
         }
     }
 }

@@ -128,6 +128,134 @@ namespace Lodino.Cli
                     }
                     return 0;
                 }
+                else if (command == "zip" && args.Length >= 2)
+                {
+                    string input = args[1];
+                    string outputZip = null;
+                    var level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Optimal;
+
+                    for (int i = 2; i < args.Length; i++)
+                    {
+                        if (args[i] == "-o" && i + 1 < args.Length)
+                        {
+                            outputZip = args[++i];
+                        }
+                        else if (args[i].StartsWith("--output=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            outputZip = args[i].Substring("--output=".Length);
+                        }
+                        else if (args[i] == "-c" && i + 1 < args.Length)
+                        {
+                            string val = args[++i].ToLowerInvariant();
+                            if (val == "store" || val == "none" || val == "0") level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Store;
+                            else if (val == "fast" || val == "1") level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Fast;
+                            else level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Optimal;
+                        }
+                        else if (args[i].StartsWith("--compression=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string val = args[i].Substring("--compression=".Length).ToLowerInvariant();
+                            if (val == "store" || val == "none" || val == "0") level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Store;
+                            else if (val == "fast" || val == "1") level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Fast;
+                            else level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Optimal;
+                        }
+                        else if (!args[i].StartsWith("-") && string.IsNullOrEmpty(outputZip))
+                        {
+                            outputZip = args[i];
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(outputZip))
+                    {
+                        outputZip = Path.GetFileNameWithoutExtension(input.TrimEnd('\\', '/')) + ".zip";
+                    }
+
+                    Console.WriteLine(string.Format("Compactando '{0}' -> '{1}' ({2})...", input, outputZip, level));
+                    using (var writer = new Lodino.Core.Formats.Archive.Zip.ZipWriter(outputZip))
+                    {
+                        if (Directory.Exists(input))
+                        {
+                            writer.AddDirectoryRecursive(input, "", level);
+                        }
+                        else if (File.Exists(input))
+                        {
+                            writer.AddFile(input, Path.GetFileName(input), level);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Caminho não encontrado: " + input);
+                            return 1;
+                        }
+                        writer.Finish();
+                    }
+                    Console.WriteLine(string.Format("Arquivo ZIP criado com sucesso: {0} ({1:N0} bytes)",
+                        Path.GetFullPath(outputZip), new FileInfo(outputZip).Length));
+                    return 0;
+                }
+                else if (command == "unzip" && args.Length >= 2)
+                {
+                    string zipFile = args[1];
+                    string destDir = null;
+
+                    for (int i = 2; i < args.Length; i++)
+                    {
+                        if (args[i] == "-o" && i + 1 < args.Length)
+                        {
+                            destDir = args[++i];
+                        }
+                        else if (args[i].StartsWith("--output=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            destDir = args[i].Substring("--output=".Length);
+                        }
+                        else if (!args[i].StartsWith("-") && string.IsNullOrEmpty(destDir))
+                        {
+                            destDir = args[i];
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(destDir))
+                    {
+                        destDir = Path.GetFileNameWithoutExtension(zipFile);
+                    }
+
+                    if (!File.Exists(zipFile))
+                    {
+                        Console.WriteLine("Arquivo ZIP não encontrado: " + zipFile);
+                        return 1;
+                    }
+
+                    Console.WriteLine(string.Format("Extraindo '{0}' -> '{1}'...", zipFile, destDir));
+                    using (var reader = new Lodino.Core.Formats.Archive.Zip.ZipReader(zipFile))
+                    {
+                        reader.ExtractAll(destDir, pct => Console.Write(string.Format("\rProgresso: {0}%", pct)));
+                    }
+                    Console.WriteLine("\nExtração concluída com sucesso!");
+                    return 0;
+                }
+                else if (command == "list-zip" && args.Length >= 2)
+                {
+                    string zipFile = args[1];
+                    if (!File.Exists(zipFile))
+                    {
+                        Console.WriteLine("Arquivo ZIP não encontrado: " + zipFile);
+                        return 1;
+                    }
+
+                    using (var reader = new Lodino.Core.Formats.Archive.Zip.ZipReader(zipFile))
+                    {
+                        Console.WriteLine("========================================");
+                        Console.WriteLine(string.Format("  CONTEÚDO DO ARQUIVO ZIP: {0}", Path.GetFileName(zipFile)));
+                        Console.WriteLine("========================================");
+                        Console.WriteLine(string.Format("Total de entradas: {0}", reader.Entries.Count));
+                        if (!string.IsNullOrEmpty(reader.Comment)) Console.WriteLine("Comentário: " + reader.Comment);
+                        Console.WriteLine("----------------------------------------");
+                        foreach (var e in reader.Entries)
+                        {
+                            Console.WriteLine(string.Format("{0,-45} {1,10} -> {2,10} [{3}]",
+                                e.Name, e.UncompressedSize.ToString("N0"), e.CompressedSize.ToString("N0"), e.Method));
+                        }
+                    }
+                    return 0;
+                }
                 else
                 {
                     Console.WriteLine("Comando inválido ou argumentos insuficientes.");
@@ -149,11 +277,16 @@ namespace Lodino.Cli
             Console.WriteLine("Uso do Lodino Native CLI:");
             Console.WriteLine("  Lodino.exe convert <caminho_entrada> <formato_destino> [pasta_destino] [--chave=valor ...]");
             Console.WriteLine("  Lodino.exe inspect <caminho_arquivo>");
+            Console.WriteLine("  Lodino.exe zip <pasta_ou_arquivo> [caminho_zip] [--compression=store|fast|optimal]");
+            Console.WriteLine("  Lodino.exe unzip <arquivo_zip> [pasta_destino]");
+            Console.WriteLine("  Lodino.exe list-zip <arquivo_zip>");
             Console.WriteLine("  Lodino.exe list-engines");
             Console.WriteLine("\nExemplos:");
             Console.WriteLine("  Lodino.exe convert dados.csv json");
-            Console.WriteLine("  Lodino.exe convert config.ini json .\\saida");
-            Console.WriteLine("  Lodino.exe convert foto.bmp bmp .\\saida --width=640 --height=480 --watermarkText=\"LODINO\"");
+            Console.WriteLine("  Lodino.exe convert arquivo.zip extract .\\pasta_extraida");
+            Console.WriteLine("  Lodino.exe zip .\\minha_pasta backup.zip --compression=optimal");
+            Console.WriteLine("  Lodino.exe unzip backup.zip .\\saida");
+            Console.WriteLine("  Lodino.exe list-zip backup.zip");
         }
     }
 }
