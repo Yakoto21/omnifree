@@ -33,10 +33,16 @@ $cliSources = @(Get-ChildItem -Path (Join-Path $rootDir "src\cli") -Filter "*.cs
 & $cscPath /nologo /target:exe "/out:$cliExe" "/reference:$coreDll" /warn:4 $optFlag $cliSources
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+$appExe = Join-Path $buildDir "Lodino.App.exe"
+Write-Host "Compilando Lodino.App.exe (Desktop Nativo)..." -ForegroundColor Cyan
+$desktopSources = @(Get-ChildItem -Path (Join-Path $rootDir "src\desktop") -Filter "*.cs" -Recurse | Select-Object -ExpandProperty FullName)
+& $cscPath /nologo /target:winexe "/out:$appExe" "/reference:$coreDll" /warn:4 $optFlag $desktopSources
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 $testExe = Join-Path $buildDir "Lodino.Tests.exe"
 Write-Host "Compilando Lodino.Tests.exe..." -ForegroundColor Cyan
 $testSources = @(Get-ChildItem -Path (Join-Path $rootDir "tests\unit") -Filter "*.cs" -Recurse | Select-Object -ExpandProperty FullName)
-& $cscPath /nologo /target:exe "/out:$testExe" "/reference:$coreDll" /warn:4 $optFlag $testSources
+& $cscPath /nologo /target:exe "/out:$testExe" "/reference:$coreDll" "/reference:$appExe" /warn:4 $optFlag $testSources
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "Compilação concluída com sucesso em $buildDir!" -ForegroundColor Green

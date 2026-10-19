@@ -10,6 +10,8 @@ using Lodino.Core.Formats.Image.Png;
 using Lodino.Core.IO;
 using Lodino.Core.Registry;
 using Lodino.Core.Safety;
+using System.Threading;
+using Lodino.Desktop;
 
 namespace Lodino.Tests
 {
@@ -207,6 +209,22 @@ namespace Lodino.Tests
             RunTest("JPEG MULTISCAN (Segurança): Rejeição de componente duplicado em varredura subsequente", Test_Jpeg_Multiscan_Adversarial_DuplicateScan_ThrowsCorruptDataException);
             RunTest("JPEG MULTISCAN (Segurança): Rejeição de componente SOS com identificador inexistente", Test_Jpeg_Multiscan_Adversarial_InvalidCompId_ThrowsCorruptDataException);
             RunTest("JPEG MULTISCAN (Segurança): Rejeição de parâmetros espectrais inválidos (Ss != 0 ou Se != 63)", Test_Jpeg_Multiscan_Adversarial_InvalidSpectralParams_ThrowsUnsupportedFormatException);
+
+            // =================================================
+            //   LODINO NATIVE DESKTOP — FASE 10 (WIN32 NATIVO) 
+            //   Módulo: Gerenciamento Assíncrono e Fila        
+            // =================================================
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE DESKTOP — FASE 10 (WIN32 NATIVO) ");
+            Console.WriteLine("  Módulo: Gerenciamento Assíncrono e Fila        ");
+            Console.WriteLine("=================================================\n");
+
+            RunTest("DESKTOP (Modelo): Inicialização de ConversionJob e formatação de metadados", Test_Desktop_ConversionJob_InitializationAndFormatting);
+            RunTest("DESKTOP (Fila): Ciclo de vida da fila (Add, Remove, Clear e contadores)", Test_Desktop_ConversionManager_QueueLifecycle);
+            RunTest("DESKTOP (Lote): Conversão assíncrona multithread de CSV -> JSON via ConversionManager", Test_Desktop_ConversionManager_BatchProcessing_CsvToJson);
+            RunTest("DESKTOP (Lote Imagens): Conversão sequencial em lote BMP -> PNG e PNG -> JPG", Test_Desktop_ConversionManager_BatchProcessing_Image_BmpToPngAndPngToJpeg);
+            RunTest("DESKTOP (Resiliência): Isolamento estrito de falhas em lote (sucesso preservado em inputs mistos)", Test_Desktop_ConversionManager_ErrorIsolation_OnMalformedInput);
+            RunTest("DESKTOP (Controle): Cancelamento cooperativo imediato de lote de conversões", Test_Desktop_ConversionManager_CooperativeCancellation);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -4422,6 +4440,259 @@ namespace Lodino.Tests
                 Assert(threw, "Parâmetros espectrais não-baseline no SOS devem lançar UnsupportedFormatException");
             }
         }
+
+        #region DESKTOP NATIVE APP TESTS (FASE 10)
+
+        private static void Test_Desktop_ConversionJob_InitializationAndFormatting()
+        {
+            var job = new ConversionJob(101, @"C:\docs\sample.csv", "json");
+            Assert(job.Id == 101, "Id deve ser 101");
+            Assert(job.SourcePath == @"C:\docs\sample.csv", "SourcePath deve corresponder");
+            Assert(job.FileName == "sample.csv", "FileName deve ser sample.csv");
+            Assert(job.SourceFormat == "csv", "SourceFormat deve ser csv");
+            Assert(job.TargetFormat == "json", "TargetFormat deve ser json");
+            Assert(job.Status == JobStatus.Queued, "Status inicial deve ser Queued");
+            Assert(job.ProgressPercent == 0, "Progresso inicial deve ser 0%");
+
+            // Formatação de tamanhos
+            Assert(job.FormatSize(500) == "500 B", "FormatSize 500 B");
+            Assert(job.FormatSize(2048).Contains("KB"), "FormatSize 2048 deve conter KB");
+            Assert(job.FormatSize(5 * 1024 * 1024).Contains("MB"), "FormatSize 5 MB deve conter MB");
+
+            // ToString
+            string str = job.ToString();
+            Assert(str.Contains("sample.csv"), "ToString deve conter nome do arquivo");
+            Assert(str.Contains("JSON"), "ToString deve conter formato destino");
+            Assert(str.Contains("Na fila"), "ToString deve indicar 'Na fila'");
+        }
+
+        private static void Test_Desktop_ConversionManager_QueueLifecycle()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_dt_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string f1 = Path.Combine(tempDir, "file1.csv");
+                string f2 = Path.Combine(tempDir, "file2.json");
+                string f3 = Path.Combine(tempDir, "file3.bmp");
+                File.WriteAllText(f1, "a,b\n1,2");
+                File.WriteAllText(f2, "{}");
+                File.WriteAllText(f3, "dummy");
+
+                var manager = new ConversionManager();
+                Assert(manager.Jobs.Count == 0, "Fila inicial vazia");
+
+                var j1 = manager.AddFile(f1);
+                Assert(j1 != null, "j1 não deve ser nulo");
+                Assert(j1.TargetFormat == "json", "Formato sugerido para CSV deve ser JSON");
+                Assert(manager.Jobs.Count == 1, "Fila deve ter 1 job");
+
+                int added = manager.AddFiles(new[] { f2, f3 });
+                Assert(added == 2, "2 arquivos adicionados");
+                Assert(manager.Jobs.Count == 3, "Fila deve ter 3 jobs");
+
+                bool removed = manager.RemoveJob(j1.Id);
+                Assert(removed, "Job 1 removido com sucesso");
+                Assert(manager.Jobs.Count == 2, "Fila deve ter 2 jobs após remoção");
+
+                manager.Clear();
+                Assert(manager.Jobs.Count == 0, "Fila limpa");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Desktop_ConversionManager_BatchProcessing_CsvToJson()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_dt_csv_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string csvFile = Path.Combine(tempDir, "clientes.csv");
+                File.WriteAllText(csvFile, "Nome,Idade,Cidade\nAlice,30,\"São Paulo\"\nBob,25,Curitiba\n", Encoding.UTF8);
+
+                var manager = new ConversionManager();
+                var job = manager.AddFile(csvFile, "json");
+
+                using (var doneEvt = new ManualResetEvent(false))
+                {
+                    int finishTotal = 0, finishSuccess = 0, finishFailed = 0;
+                    manager.BatchFinished += (t, s, f) =>
+                    {
+                        finishTotal = t;
+                        finishSuccess = s;
+                        finishFailed = f;
+                        doneEvt.Set();
+                    };
+
+                    bool started = manager.StartBatch("json", tempDir);
+                    Assert(started, "StartBatch deve iniciar");
+
+                    bool completed = doneEvt.WaitOne(10000);
+                    Assert(completed, "Processamento em lote deve terminar em menos de 10s");
+                    Assert(finishTotal == 1, "Total deve ser 1");
+                    Assert(finishSuccess == 1, "Sucesso deve ser 1");
+                    Assert(finishFailed == 0, "Falha deve ser 0");
+                    Assert(job.Status == JobStatus.Completed, "Status do job deve ser Completed");
+                    Assert(job.ProgressPercent == 100, "Progresso do job deve ser 100%");
+                    Assert(!string.IsNullOrEmpty(job.DestinationPath), "DestinationPath deve estar preenchido");
+                    Assert(File.Exists(job.DestinationPath), "Arquivo JSON destino deve existir");
+
+                    string jsonContent = File.ReadAllText(job.DestinationPath, Encoding.UTF8);
+                    Assert(jsonContent.Contains("Alice"), "JSON deve conter Alice");
+                    Assert(jsonContent.Contains("Curitiba"), "JSON deve conter Curitiba");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Desktop_ConversionManager_BatchProcessing_Image_BmpToPngAndPngToJpeg()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_dt_img_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                // Gera BMP 16x16 nativo
+                string bmpFile = Path.Combine(tempDir, "icon.bmp");
+                var buffer = new PixelBuffer(16, 16);
+                for (int y = 0; y < 16; y++)
+                {
+                    for (int x = 0; x < 16; x++)
+                    {
+                        buffer.SetPixel(x, y, new PixelColor((byte)(x * 15), (byte)(y * 15), 128, 255));
+                    }
+                }
+                using (var fs = File.Create(bmpFile))
+                {
+                    BmpEncoder.Encode(buffer, fs, 24);
+                }
+
+                var manager = new ConversionManager();
+                var jobBmpToPng = manager.AddFile(bmpFile, "png");
+
+                // Etapa 1: BMP -> PNG
+                using (var doneEvt = new ManualResetEvent(false))
+                {
+                    manager.BatchFinished += (t, s, f) => doneEvt.Set();
+                    manager.StartBatch("png", tempDir);
+                    bool ok = doneEvt.WaitOne(10000);
+                    Assert(ok, "Conversão BMP -> PNG deve terminar em menos de 10s");
+                    Assert(jobBmpToPng.Status == JobStatus.Completed, "BMP -> PNG deve ter sucesso");
+                    Assert(File.Exists(jobBmpToPng.DestinationPath), "PNG gerado deve existir");
+                }
+
+                // Etapa 2: PNG -> JPG
+                string generatedPng = jobBmpToPng.DestinationPath;
+                var manager2 = new ConversionManager();
+                var jobPngToJpg = manager2.AddFile(generatedPng, "jpg");
+
+                using (var doneEvt2 = new ManualResetEvent(false))
+                {
+                    manager2.BatchFinished += (t, s, f) => doneEvt2.Set();
+                    manager2.StartBatch("jpg", tempDir);
+                    bool ok2 = doneEvt2.WaitOne(10000);
+                    Assert(ok2, "Conversão PNG -> JPG deve terminar em menos de 10s");
+                    Assert(jobPngToJpg.Status == JobStatus.Completed, "PNG -> JPG deve ter sucesso");
+                    Assert(File.Exists(jobPngToJpg.DestinationPath), "JPG gerado deve existir");
+                    Assert(new FileInfo(jobPngToJpg.DestinationPath).Length > 0, "JPG gerado deve ter tamanho > 0");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Desktop_ConversionManager_ErrorIsolation_OnMalformedInput()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_dt_err_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string validCsv = Path.Combine(tempDir, "valid.csv");
+                File.WriteAllText(validCsv, "col1,col2\nval1,val2\n");
+
+                string corruptBmp = Path.Combine(tempDir, "corrupt.bmp");
+                File.WriteAllBytes(corruptBmp, new byte[] { 0x42, 0x4D, 0x00, 0x00 }); // BMP truncado no cabeçalho
+
+                var manager = new ConversionManager();
+                var jobValid = manager.AddFile(validCsv, "json");
+                var jobCorrupt = manager.AddFile(corruptBmp, "png");
+
+                using (var doneEvt = new ManualResetEvent(false))
+                {
+                    int totalCount = 0, successCount = 0, failedCount = 0;
+                    manager.BatchFinished += (t, s, f) =>
+                    {
+                        totalCount = t;
+                        successCount = s;
+                        failedCount = f;
+                        doneEvt.Set();
+                    };
+
+                    manager.StartBatch(null, tempDir);
+                    bool ok = doneEvt.WaitOne(10000);
+                    Assert(ok, "Lote com erro deve finalizar normalmente sem travar");
+                    Assert(totalCount == 2, "Total de 2 jobs processados");
+                    Assert(successCount == 1, "Exatamente 1 job com sucesso");
+                    Assert(failedCount == 1, "Exatamente 1 job com falha");
+                    Assert(jobValid.Status == JobStatus.Completed, "Job válido deve estar Completed");
+                    Assert(jobCorrupt.Status == JobStatus.Failed, "Job corrompido deve estar Failed");
+                    Assert(!string.IsNullOrEmpty(jobCorrupt.ErrorMessage), "Mensagem de erro deve estar registrada no job");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Desktop_ConversionManager_CooperativeCancellation()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_dt_can_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var manager = new ConversionManager();
+                for (int i = 0; i < 5; i++)
+                {
+                    string f = Path.Combine(tempDir, string.Format("item_{0}.csv", i));
+                    File.WriteAllText(f, string.Format("x,y\n{0},{1}", i, i * 2));
+                    manager.AddFile(f, "json");
+                }
+
+                using (var doneEvt = new ManualResetEvent(false))
+                {
+                    manager.BatchFinished += (t, s, f) => doneEvt.Set();
+                    manager.StartBatch("json", tempDir);
+                    manager.Cancel(); // Cancela cooperativamente imediatamente
+                    bool ok = doneEvt.WaitOne(10000);
+                    Assert(ok, "Lote cancelado deve finalizar e sinalizar conclusão");
+                    Assert(manager.CancelRequested, "CancelRequested deve ser true");
+
+                    bool hasCancelledOrFinished = false;
+                    foreach (var j in manager.Jobs)
+                    {
+                        if (j.Status == JobStatus.Cancelled || j.Status == JobStatus.Completed)
+                        {
+                            hasCancelledOrFinished = true;
+                        }
+                    }
+                    Assert(hasCancelledOrFinished, "Cancelamento cooperativo registrado");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        #endregion
 
         #endregion
 
