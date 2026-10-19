@@ -62,8 +62,8 @@ namespace Lodino.Core.Formats.Archive.Zip
                 throw new CorruptDataException("Arquivo ZIP inválido ou truncado: tamanho menor que o cabeçalho mínimo EOCD de 22 bytes.");
             }
 
-            // 1. Localiza o registro End of Central Directory (EOCD) buscando de trás para frente
-            long maxSearchBytes = Math.Min(streamLength, (long)ZipConstants.EndOfCentralDirectorySignature + SecurityLimits.MaxZipCommentLength + 22);
+            // 1. Localiza o registro End of Central Directory (EOCD) buscando de trás para frente (com backtracking e verificação de invariante)
+            long maxSearchBytes = Math.Min(streamLength, (long)SecurityLimits.MaxZipCommentLength + 22);
             long searchStart = Math.Max(0, streamLength - maxSearchBytes);
             _stream.Seek(searchStart, SeekOrigin.Begin);
 
@@ -78,8 +78,13 @@ namespace Lodino.Core.Formats.Archive.Zip
                     searchBuffer[i + 2] == 0x05 &&
                     searchBuffer[i + 3] == 0x06)
                 {
-                    eocdIndex = i;
-                    break;
+                    int candidateCommentLen = searchBuffer[i + 20] | (searchBuffer[i + 21] << 8);
+                    long candidateEocdOffset = searchStart + i;
+                    if (candidateEocdOffset + 22 + candidateCommentLen == streamLength)
+                    {
+                        eocdIndex = i;
+                        break;
+                    }
                 }
             }
 
@@ -127,7 +132,7 @@ namespace Lodino.Core.Formats.Archive.Zip
                 _comment = Encoding.UTF8.GetString(commentBytes);
             }
 
-            if (cdOffset + cdSize > eocdOffset)
+            if ((long)cdOffset + cdSize > eocdOffset)
             {
                 throw new CorruptDataException("Tamanho ou deslocamento do Diretório Central corrompido (ultrapassa início do EOCD).");
             }
@@ -169,6 +174,7 @@ namespace Lodino.Core.Formats.Archive.Zip
                 byte[] nameBytes = reader.ReadBytes(nameLen);
                 bool isUtf8 = (flags & ZipConstants.FlagUtf8) != 0;
                 string entryName = isUtf8 ? Encoding.UTF8.GetString(nameBytes) : DecodeOemOrUtf8(nameBytes);
+                entryName = ZipEntry.NormalizeEntryName(entryName);
 
                 byte[] extraBytes = extraLen > 0 ? reader.ReadBytes(extraLen) : new byte[0];
                 byte[] fileCommentBytes = fileCommentLen > 0 ? reader.ReadBytes(fileCommentLen) : new byte[0];
@@ -299,12 +305,35 @@ namespace Lodino.Core.Formats.Archive.Zip
             }
             else // ZipCompressionMethod.Deflate
             {
-                using (var boundedStream = new BoundedStream(_stream, entry.CompressedSize))
-                using (var crcStream = new CrcWritingStream(destinationStream, computedCrc))
+                if (entry.UncompressedSize == 0 && entry.CompressedSize == 0)
                 {
-                    DeflateDecompressor.Decompress(boundedStream, crcStream, SecurityLimits.MaxZipEntrySize);
-                    computedCrc = crcStream.CurrentCrc;
-                    bytesWritten = crcStream.BytesWritten;
+                    computedCrc = Crc32.InitialCrc;
+                    bytesWritten = 0;
+                }
+                else
+                {
+                    using (var boundedStream = new BoundedStream(_stream, entry.CompressedSize))
+                    using (var crcStream = new CrcWritingStream(destinationStream, computedCrc))
+                    {
+                        // Defesa contra mentira de tamanho no cabeçalho / Zip Bomb: limita descompressão ao menor entre declarado e limite global
+                        long maxDecompressBytes = Math.Min(entry.UncompressedSize, SecurityLimits.MaxZipEntrySize);
+                        try
+                        {
+                            DeflateDecompressor.Decompress(boundedStream, crcStream, maxDecompressBytes);
+                        }
+                        catch (ResourceLimitException ex)
+                        {
+                            if (entry.UncompressedSize < SecurityLimits.MaxZipEntrySize)
+                            {
+                                throw new CorruptDataException(string.Format(
+                                    "Tamanho descompactado incorreto na entrada '{0}': excede o tamanho declarado no cabeçalho ({1:N0} bytes).",
+                                    entry.Name, entry.UncompressedSize), ex);
+                            }
+                            throw;
+                        }
+                        computedCrc = crcStream.CurrentCrc;
+                        bytesWritten = crcStream.BytesWritten;
+                    }
                 }
             }
 
@@ -317,7 +346,7 @@ namespace Lodino.Core.Formats.Archive.Zip
                     entry.Name, entry.UncompressedSize, bytesWritten));
             }
 
-            if (entry.UncompressedSize > 0 && finalCrc != entry.Crc32)
+            if (finalCrc != entry.Crc32)
             {
                 throw new CorruptDataException(string.Format(
                     "Falha de integridade CRC-32 na entrada '{0}': calculado 0x{1:X8}, esperado 0x{2:X8}.",
@@ -325,7 +354,12 @@ namespace Lodino.Core.Formats.Archive.Zip
             }
         }
 
-        public void ExtractAll(string destinationDirectory, Action<int> onProgress = null, Func<bool> isCancelled = null)
+        public void ExtractAll(string destinationDirectory, Action<int> onProgress, Func<bool> isCancelled = null)
+        {
+            ExtractAll(destinationDirectory, overwrite: true, onProgress: onProgress, isCancelled: isCancelled);
+        }
+
+        public void ExtractAll(string destinationDirectory, bool overwrite = true, Action<int> onProgress = null, Func<bool> isCancelled = null)
         {
             if (string.IsNullOrEmpty(destinationDirectory)) throw new ArgumentNullException("destinationDirectory");
             string destFull = Path.GetFullPath(destinationDirectory);
@@ -334,6 +368,18 @@ namespace Lodino.Core.Formats.Archive.Zip
                 Directory.CreateDirectory(destFull);
             }
 
+            // Pré-validação do tamanho total descompactado declarado de todas as entradas
+            long totalDeclaredBytes = 0;
+            for (int k = 0; k < _entries.Count; k++)
+            {
+                if (!_entries[k].IsDirectory)
+                {
+                    totalDeclaredBytes += _entries[k].UncompressedSize;
+                }
+            }
+            SecurityLimits.AssertZipTotalExtracted(totalDeclaredBytes);
+
+            var dirTimestamps = new List<KeyValuePair<string, DateTime>>();
             long totalAccumulatedBytes = 0;
             int total = _entries.Count;
 
@@ -353,16 +399,23 @@ namespace Lodino.Core.Formats.Archive.Zip
                     {
                         Directory.CreateDirectory(targetPath);
                     }
+                    dirTimestamps.Add(new KeyValuePair<string, DateTime>(targetPath, entry.LastWriteTime));
                 }
                 else
                 {
+                    if (File.Exists(targetPath) && !overwrite)
+                    {
+                        throw new IOException(string.Format(
+                            "O arquivo de destino já existe e a substituição não foi permitida: '{0}'.", targetPath));
+                    }
+
                     string parentDir = Path.GetDirectoryName(targetPath);
                     if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
                     {
                         Directory.CreateDirectory(parentDir);
                     }
 
-                    // Gravação atômica: extrai para arquivo temporário e substitui controladamente
+                    // Gravação atômica segura: extrai para arquivo temporário e substitui com proteção de backup contra perda
                     string tempFile = targetPath + ".lodinotmp_" + Guid.NewGuid().ToString("N").Substring(0, 8);
                     try
                     {
@@ -376,9 +429,27 @@ namespace Lodino.Core.Formats.Archive.Zip
 
                         if (File.Exists(targetPath))
                         {
-                            File.Delete(targetPath);
+                            string backupFile = targetPath + ".lodinobak_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+                            File.Move(targetPath, backupFile);
+                            try
+                            {
+                                File.Move(tempFile, targetPath);
+                                try { File.Delete(backupFile); } catch { }
+                            }
+                            catch
+                            {
+                                if (File.Exists(backupFile))
+                                {
+                                    try { File.Move(backupFile, targetPath); } catch { }
+                                }
+                                throw;
+                            }
                         }
-                        File.Move(tempFile, targetPath);
+                        else
+                        {
+                            File.Move(tempFile, targetPath);
+                        }
+
                         try
                         {
                             File.SetLastWriteTime(targetPath, entry.LastWriteTime);
@@ -400,6 +471,19 @@ namespace Lodino.Core.Formats.Archive.Zip
                     int pct = (int)(((long)(i + 1) * 100) / total);
                     onProgress(pct);
                 }
+            }
+
+            // Restaura carimbos de data/hora dos diretórios após extração completa dos arquivos
+            for (int d = 0; d < dirTimestamps.Count; d++)
+            {
+                try
+                {
+                    if (Directory.Exists(dirTimestamps[d].Key))
+                    {
+                        Directory.SetLastWriteTime(dirTimestamps[d].Key, dirTimestamps[d].Value);
+                    }
+                }
+                catch { }
             }
         }
 
@@ -425,7 +509,7 @@ namespace Lodino.Core.Formats.Archive.Zip
             if (string.IsNullOrEmpty(zipFilePath)) throw new ArgumentNullException("zipFilePath");
             using (var reader = new ZipReader(zipFilePath))
             {
-                reader.ExtractAll(destinationDirectory);
+                reader.ExtractAll(destinationDirectory, overwrite: overwrite);
             }
         }
 

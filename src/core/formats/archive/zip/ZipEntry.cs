@@ -26,7 +26,7 @@ namespace Lodino.Core.Formats.Archive.Zip
             get
             {
                 if (string.IsNullOrEmpty(Name)) return false;
-                if (Name.EndsWith("/")) return true;
+                if (Name.EndsWith("/") || Name.EndsWith("\\")) return true;
                 // Atributo DOS de diretório (0x10) ou atributo Unix de diretório (0040000)
                 if ((ExternalAttributes & ZipConstants.FileAttributeDirectoryWindows) != 0) return true;
                 if ((ExternalAttributes & 0x40000000) != 0) return true;
@@ -63,10 +63,15 @@ namespace Lodino.Core.Formats.Archive.Zip
         public static string NormalizeEntryName(string name)
         {
             if (string.IsNullOrEmpty(name)) return string.Empty;
+            bool isDir = name.EndsWith("/") || name.EndsWith("\\");
             string normalized = name.Replace('\\', '/');
             while (normalized.StartsWith("/"))
             {
                 normalized = normalized.Substring(1);
+            }
+            if (isDir && !normalized.EndsWith("/") && !string.IsNullOrEmpty(normalized))
+            {
+                normalized += "/";
             }
             return normalized;
         }

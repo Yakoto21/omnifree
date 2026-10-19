@@ -290,6 +290,25 @@ namespace Lodino.Tests
             RunTest("ZIP (Engine): Pipeline de conversão ponta a ponta (Empacotamento e Extração)", Test_Zip_Engine_ConvertPipeline_ZipAndUnzip);
             RunTest("ZIP (Interoperabilidade): Descompressão cruzada de stream DEFLATE padrão", Test_Zip_External_Interoperability_DeflateStream);
 
+            // =================================================
+            //   LODINO NATIVE CORE — HARDENING ZIP (FASE 12.5) 
+            //   Módulo: Resiliência Adversarial do Motor ZIP   
+            // =================================================
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE CORE — HARDENING ZIP (FASE 12.5) ");
+            Console.WriteLine("  Módulo: Resiliência Adversarial do Motor ZIP   ");
+            Console.WriteLine("=================================================\n");
+
+            RunTest("HARDENING ZIP: Bloqueio estrito de nomes de dispositivos reservados Win32 (CON, AUX, NUL, COM1..9)", Test_Hardening_Zip_WindowsReservedDeviceNames_Rejection);
+            RunTest("HARDENING ZIP: Rejeição de segmentos com espaço ou ponto final (anti-truncamento Win32)", Test_Hardening_Zip_TrailingDotsAndSpaces_Rejection);
+            RunTest("HARDENING ZIP: Aborto imediato contra mentira de tamanho no cabeçalho (Header Size Lie Bomb)", Test_Hardening_Zip_HeaderSizeLie_DecompressionBomb_AbortsEarly);
+            RunTest("HARDENING ZIP: Busca EOCD com verificação de invariante e suporte a falso EOCD em comentário", Test_Hardening_Zip_Eocd_Backtracking_FakeEocdInComment);
+            RunTest("HARDENING ZIP: Compatibilidade com pastas com barra invertida geradas pelo Compress-Archive", Test_Hardening_Zip_BackslashDirectory_CompressArchive_Compatibility);
+            RunTest("HARDENING ZIP: Rejeição de entrada de 0 bytes com CRC corrompido", Test_Hardening_Zip_ZeroByteEntry_BadCrc_Rejection);
+            RunTest("HARDENING ZIP: Rejeição de streams não-navegáveis (CanSeek = false) no ZipWriter", Test_Hardening_Zip_NonSeekable_ZipWriter_Rejection);
+            RunTest("HARDENING ZIP: Proteção contra sobrescrita indevida (overwrite = false) e substituição atômica", Test_Hardening_Zip_ExtractAll_OverwriteFalse_ThrowsIfExists);
+            RunTest("HARDENING ZIP: Restauração fiel de carimbos de data/hora em diretórios extraídos", Test_Hardening_Zip_DirectoryTimestamps_Restored);
+
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
             Console.WriteLine("-------------------------------------------------");
@@ -6677,6 +6696,484 @@ namespace Lodino.Tests
                 }
             }
         }
+
+        #region HARDENING ZIP (FASE 12.5)
+
+        private static void Test_Hardening_Zip_WindowsReservedDeviceNames_Rejection()
+        {
+            string[] reservedNames = new[]
+            {
+                "CON.txt", "con", "con/sub.txt", "dir/aux/file.txt", "NUL", "nul.dat",
+                "prn.log", "COM1", "com9.bin", "LPT1", "lpt5.json"
+            };
+
+            for (int i = 0; i < reservedNames.Length; i++)
+            {
+                bool caught = false;
+                try
+                {
+                    ZipSecurity.ValidateSafeRelativePath(reservedNames[i]);
+                }
+                catch (PathSecurityException)
+                {
+                    caught = true;
+                }
+                Assert(caught, "Deve rejeitar nome de dispositivo reservado do Windows: " + reservedNames[i]);
+            }
+        }
+
+        private static void Test_Hardening_Zip_TrailingDotsAndSpaces_Rejection()
+        {
+            string[] dangerousNames = new[]
+            {
+                "script.bat ", "file.txt.", "sub /file.txt", "sub./file.txt", "trailing. "
+            };
+
+            for (int i = 0; i < dangerousNames.Length; i++)
+            {
+                bool caught = false;
+                try
+                {
+                    ZipSecurity.ValidateSafeRelativePath(dangerousNames[i]);
+                }
+                catch (PathSecurityException)
+                {
+                    caught = true;
+                }
+                Assert(caught, "Deve rejeitar segmento terminando com espaço ou ponto: " + dangerousNames[i]);
+            }
+        }
+
+        private static void Test_Hardening_Zip_HeaderSizeLie_DecompressionBomb_AbortsEarly()
+        {
+            byte[] rawData = new byte[10000];
+            for (int i = 0; i < rawData.Length; i++) rawData[i] = (byte)'A';
+            byte[] compressed;
+            using (var src = new MemoryStream(rawData))
+            using (var dst = new MemoryStream())
+            {
+                DeflateCompressor.Compress(src, dst, ZipCompressionLevel.Optimal);
+                compressed = dst.ToArray();
+            }
+
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms, Encoding.UTF8, true))
+                {
+                    long lfhOffset = ms.Position;
+                    // LFH
+                    writer.Write(ZipConstants.LocalFileHeaderSignature);
+                    writer.Write(ZipConstants.VersionDefaultNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodDeflate);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write(Crc32.Calculate(rawData));
+                    writer.Write((uint)compressed.Length);
+                    writer.Write((uint)50); // Mente no LFH
+                    byte[] nameBytes = Encoding.UTF8.GetBytes("bomb.txt");
+                    writer.Write((ushort)nameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write(nameBytes);
+                    writer.Write(compressed);
+
+                    long cdOffset = ms.Position;
+                    // CDH
+                    writer.Write(ZipConstants.CentralDirectoryHeaderSignature);
+                    writer.Write(ZipConstants.VersionMadeByUnix);
+                    writer.Write(ZipConstants.VersionDefaultNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodDeflate);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write(Crc32.Calculate(rawData));
+                    writer.Write((uint)compressed.Length);
+                    writer.Write((uint)50); // Mente no CDH: declara 50 bytes em vez de 10.000
+                    writer.Write((ushort)nameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write(ZipConstants.FileAttributeRegularUnix);
+                    writer.Write((uint)lfhOffset);
+                    writer.Write(nameBytes);
+
+                    uint cdSize = (uint)(ms.Position - cdOffset);
+                    // EOCD
+                    writer.Write(ZipConstants.EndOfCentralDirectorySignature);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)1);
+                    writer.Write((ushort)1);
+                    writer.Write(cdSize);
+                    writer.Write((uint)cdOffset);
+                    writer.Write((ushort)0);
+                }
+                zipData = ms.ToArray();
+            }
+
+            bool caught = false;
+            try
+            {
+                using (var ms = new MemoryStream(zipData))
+                using (var reader = new ZipReader(ms))
+                {
+                    reader.ReadEntryBytes(reader.Entries[0]);
+                }
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.IndexOf("Tamanho descompactado incorreto", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    caught = true;
+                }
+            }
+            Assert(caught, "Deve abortar descompressão com CorruptDataException quando a saída ultrapassar o tamanho declarado");
+        }
+
+        private static void Test_Hardening_Zip_Eocd_Backtracking_FakeEocdInComment()
+        {
+            byte[] filePayload = Encoding.UTF8.GetBytes("Payload real do arquivo");
+            byte[] zipData;
+
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, leaveOpen: true))
+                {
+                    writer.AddEntry("test.txt", filePayload, ZipCompressionLevel.Store);
+                    writer.Comment = "Comentário com PK\x05\x06 inserido propositalmente para testar backtracking.";
+                    writer.Finish();
+                }
+                zipData = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(zipData))
+            using (var reader = new ZipReader(ms))
+            {
+                AssertEqual(1, reader.Entries.Count, "Deve ler exatamente 1 entrada");
+                AssertEqual("test.txt", reader.Entries[0].Name, "Nome da entrada");
+                byte[] extracted = reader.ReadEntryBytes(reader.Entries[0]);
+                AssertEqual(filePayload.Length, extracted.Length, "Tamanho extraído");
+                Assert(reader.Comment.Contains("PK\x05\x06"), "Comentário preservado");
+            }
+        }
+
+        private static void Test_Hardening_Zip_BackslashDirectory_CompressArchive_Compatibility()
+        {
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms, Encoding.UTF8, true))
+                {
+                    long lfhOffset1 = ms.Position;
+                    // LFH 1: Diretório sub\dir\
+                    byte[] dirNameBytes = Encoding.UTF8.GetBytes("sub\\dir\\");
+                    writer.Write(ZipConstants.LocalFileHeaderSignature);
+                    writer.Write(ZipConstants.VersionStoreNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodStore);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((ushort)dirNameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write(dirNameBytes);
+
+                    long lfhOffset2 = ms.Position;
+                    // LFH 2: Arquivo sub\dir\file.txt
+                    byte[] fileNameBytes = Encoding.UTF8.GetBytes("sub\\dir\\file.txt");
+                    byte[] fileData = Encoding.UTF8.GetBytes("Olá Compress-Archive!");
+                    writer.Write(ZipConstants.LocalFileHeaderSignature);
+                    writer.Write(ZipConstants.VersionStoreNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodStore);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write(Crc32.Calculate(fileData));
+                    writer.Write((uint)fileData.Length);
+                    writer.Write((uint)fileData.Length);
+                    writer.Write((ushort)fileNameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write(fileNameBytes);
+                    writer.Write(fileData);
+
+                    long cdOffset = ms.Position;
+                    // CDH 1: Diretório sub\dir\ com atributos externos zerados
+                    writer.Write(ZipConstants.CentralDirectoryHeaderSignature);
+                    writer.Write(ZipConstants.VersionMadeByWindows);
+                    writer.Write(ZipConstants.VersionStoreNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodStore);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((ushort)dirNameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((uint)0); // Atributos externos zerados
+                    writer.Write((uint)lfhOffset1);
+                    writer.Write(dirNameBytes);
+
+                    // CDH 2: Arquivo
+                    writer.Write(ZipConstants.CentralDirectoryHeaderSignature);
+                    writer.Write(ZipConstants.VersionMadeByWindows);
+                    writer.Write(ZipConstants.VersionStoreNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodStore);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write(Crc32.Calculate(fileData));
+                    writer.Write((uint)fileData.Length);
+                    writer.Write((uint)fileData.Length);
+                    writer.Write((ushort)fileNameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((uint)0);
+                    writer.Write((uint)lfhOffset2);
+                    writer.Write(fileNameBytes);
+
+                    uint cdSize = (uint)(ms.Position - cdOffset);
+                    // EOCD
+                    writer.Write(ZipConstants.EndOfCentralDirectorySignature);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)2);
+                    writer.Write((ushort)2);
+                    writer.Write(cdSize);
+                    writer.Write((uint)cdOffset);
+                    writer.Write((ushort)0);
+                }
+                zipData = ms.ToArray();
+            }
+
+            string testDir = Path.Combine(Path.GetTempPath(), "test_compress_archive_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                using (var ms = new MemoryStream(zipData))
+                using (var reader = new ZipReader(ms))
+                {
+                    AssertEqual(2, reader.Entries.Count, "Deve ler 2 entradas");
+                    Assert(reader.Entries[0].IsDirectory, "Entrada com barra invertida 'sub\\dir\\' deve ser reconhecida como IsDirectory");
+                    AssertEqual("sub/dir/", reader.Entries[0].Name, "Nome do diretório normalizado com barra padrão");
+                    reader.ExtractAll(testDir);
+                }
+
+                string extractedFilePath = Path.Combine(testDir, "sub", "dir", "file.txt");
+                Assert(File.Exists(extractedFilePath), "Arquivo dentro da pasta normalizada deve existir");
+                AssertEqual("Olá Compress-Archive!", File.ReadAllText(extractedFilePath, Encoding.UTF8), "Conteúdo correto");
+            }
+            finally
+            {
+                if (Directory.Exists(testDir)) Directory.Delete(testDir, true);
+            }
+        }
+
+        private static void Test_Hardening_Zip_ZeroByteEntry_BadCrc_Rejection()
+        {
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms, Encoding.UTF8, true))
+                {
+                    long lfhOffset = ms.Position;
+                    byte[] nameBytes = Encoding.UTF8.GetBytes("empty_bad_crc.txt");
+                    // LFH
+                    writer.Write(ZipConstants.LocalFileHeaderSignature);
+                    writer.Write(ZipConstants.VersionStoreNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodStore);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((uint)0xDEADBEEF); // CRC corrompido para arquivo de 0 bytes
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((ushort)nameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write(nameBytes);
+
+                    long cdOffset = ms.Position;
+                    // CDH
+                    writer.Write(ZipConstants.CentralDirectoryHeaderSignature);
+                    writer.Write(ZipConstants.VersionMadeByUnix);
+                    writer.Write(ZipConstants.VersionStoreNeeded);
+                    writer.Write((ushort)ZipConstants.FlagUtf8);
+                    writer.Write((ushort)ZipConstants.CompressionMethodStore);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((uint)0xDEADBEEF); // CRC corrompido no CDH
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((ushort)nameBytes.Length);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write(ZipConstants.FileAttributeRegularUnix);
+                    writer.Write((uint)lfhOffset);
+                    writer.Write(nameBytes);
+
+                    uint cdSize = (uint)(ms.Position - cdOffset);
+                    // EOCD
+                    writer.Write(ZipConstants.EndOfCentralDirectorySignature);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)1);
+                    writer.Write((ushort)1);
+                    writer.Write(cdSize);
+                    writer.Write((uint)cdOffset);
+                    writer.Write((ushort)0);
+                }
+                zipData = ms.ToArray();
+            }
+
+            bool caught = false;
+            try
+            {
+                using (var ms = new MemoryStream(zipData))
+                using (var reader = new ZipReader(ms))
+                {
+                    reader.ReadEntryBytes(reader.Entries[0]);
+                }
+            }
+            catch (CorruptDataException)
+            {
+                caught = true;
+            }
+            Assert(caught, "Arquivo de 0 bytes com CRC != 0 deve ser rejeitado com CorruptDataException");
+        }
+
+        private static void Test_Hardening_Zip_NonSeekable_ZipWriter_Rejection()
+        {
+            var nonSeekableStream = new NonSeekableWriteOnlyStream();
+            bool caught = false;
+            try
+            {
+                using (new ZipWriter(nonSeekableStream))
+                {
+                }
+            }
+            catch (UnsupportedFormatException)
+            {
+                caught = true;
+            }
+            Assert(caught, "ZipWriter deve rejeitar stream com CanSeek = false com UnsupportedFormatException");
+        }
+
+        private static void Test_Hardening_Zip_ExtractAll_OverwriteFalse_ThrowsIfExists()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "test_overwrite_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            string targetFile = Path.Combine(tempDir, "existing.txt");
+            File.WriteAllText(targetFile, "Original content before extraction");
+
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, leaveOpen: true))
+                {
+                    writer.AddEntry("existing.txt", Encoding.UTF8.GetBytes("New content from ZIP"));
+                    writer.Finish();
+                }
+                zipData = ms.ToArray();
+            }
+
+            try
+            {
+                // 1. Com overwrite = false, deve lançar IOException e preservar arquivo original
+                bool caught = false;
+                try
+                {
+                    using (var ms = new MemoryStream(zipData))
+                    using (var reader = new ZipReader(ms))
+                    {
+                        reader.ExtractAll(tempDir, overwrite: false);
+                    }
+                }
+                catch (IOException)
+                {
+                    caught = true;
+                }
+                Assert(caught, "ExtractAll com overwrite = false deve lançar IOException ao encontrar arquivo existente");
+                AssertEqual("Original content before extraction", File.ReadAllText(targetFile), "Arquivo original deve permanecer intacto");
+
+                // 2. Com overwrite = true, deve substituir atomicamente
+                using (var ms = new MemoryStream(zipData))
+                using (var reader = new ZipReader(ms))
+                {
+                    reader.ExtractAll(tempDir, overwrite: true);
+                }
+                AssertEqual("New content from ZIP", File.ReadAllText(targetFile), "Arquivo deve ter sido substituído com o novo conteúdo");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Hardening_Zip_DirectoryTimestamps_Restored()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "test_dirtimes_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            DateTime targetDate = new DateTime(2021, 5, 12, 15, 30, 0);
+            byte[] zipData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, leaveOpen: true))
+                {
+                    writer.AddDirectory("custom_dir");
+                    writer.Entries[0].LastWriteTime = targetDate;
+                    writer.AddEntry("custom_dir/file.txt", Encoding.UTF8.GetBytes("conteúdo"));
+                    writer.Finish();
+                }
+                zipData = ms.ToArray();
+            }
+
+            try
+            {
+                using (var ms = new MemoryStream(zipData))
+                using (var reader = new ZipReader(ms))
+                {
+                    reader.ExtractAll(tempDir);
+                }
+
+                string dirOnDisk = Path.Combine(tempDir, "custom_dir");
+                Assert(Directory.Exists(dirOnDisk), "Diretório deve existir");
+                DateTime actualDate = Directory.GetLastWriteTime(dirOnDisk);
+                AssertEqual(targetDate.Year, actualDate.Year, "Ano do diretório restaurado");
+                AssertEqual(targetDate.Month, actualDate.Month, "Mês do diretório restaurado");
+                AssertEqual(targetDate.Day, actualDate.Day, "Dia do diretório restaurado");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private class NonSeekableWriteOnlyStream : Stream
+        {
+            public override bool CanRead { get { return false; } }
+            public override bool CanSeek { get { return false; } }
+            public override bool CanWrite { get { return true; } }
+            public override long Length { get { throw new NotSupportedException(); } }
+            public override long Position { get { throw new NotSupportedException(); } set { throw new NotSupportedException(); } }
+            public override void Flush() { }
+            public override int Read(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+            public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
+            public override void SetLength(long value) { throw new NotSupportedException(); }
+            public override void Write(byte[] buffer, int offset, int count) { }
+        }
+
+        #endregion
 
         #endregion
 

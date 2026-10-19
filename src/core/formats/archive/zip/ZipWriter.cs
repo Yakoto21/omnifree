@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using Lodino.Core.Errors;
 using Lodino.Core.IO;
 using Lodino.Core.Safety;
 
@@ -35,6 +36,7 @@ namespace Lodino.Core.Formats.Archive.Zip
         {
             if (stream == null) throw new ArgumentNullException("stream");
             if (!stream.CanWrite) throw new ArgumentException("O stream deve permitir gravação.", "stream");
+            if (!stream.CanSeek) throw new UnsupportedFormatException("O ZipWriter requer um stream com suporte a busca (CanSeek = true) para registrar posições e o Diretório Central.");
             _stream = stream;
             _leaveOpen = leaveOpen;
         }
