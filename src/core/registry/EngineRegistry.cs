@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Lodino.Core.Api;
 using Lodino.Core.Errors;
 using Lodino.Core.Formats.Data;
+using Lodino.Core.Formats.Image;
 
 namespace Lodino.Core.Registry
 {
@@ -12,6 +13,7 @@ namespace Lodino.Core.Registry
         {
             var registry = new EngineRegistry();
             registry.Register(new StructuredDataEngine());
+            registry.Register(new BmpEngine());
             return registry;
         });
 

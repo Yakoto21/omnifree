@@ -1,0 +1,162 @@
+using System;
+using System.IO;
+using Lodino.Core.Errors;
+
+namespace Lodino.Core.Formats.Image
+{
+    /// <summary>
+    /// Decodificador proprietário de imagens BMP não comprimidas (24-bit BGR e 32-bit BGRA).
+    /// Suporta orientação bottom-up e top-down, stride com padding e recuperação de canal alfa em BGRX.
+    /// </summary>
+    public static class BmpDecoder
+    {
+        public static PixelBuffer Decode(byte[] data)
+        {
+            if (data == null) throw new ArgumentNullException("data");
+            using (var ms = new MemoryStream(data, false))
+            {
+                return Decode(ms);
+            }
+        }
+
+        public static PixelBuffer Decode(Stream stream)
+        {
+            if (stream == null) throw new ArgumentNullException("stream");
+            if (!stream.CanRead) throw new ArgumentException("Stream deve suportar leitura.", "stream");
+
+            long streamLength;
+            try
+            {
+                streamLength = stream.Length;
+            }
+            catch (NotSupportedException)
+            {
+                // Se o stream não suporta Length, copie para um MemoryStream seguro
+                using (var ms = new MemoryStream())
+                {
+                    byte[] copyBuf = new byte[8192];
+                    int read;
+                    while ((read = stream.Read(copyBuf, 0, copyBuf.Length)) > 0)
+                    {
+                        ms.Write(copyBuf, 0, read);
+                    }
+                    ms.Position = 0;
+                    return Decode(ms);
+                }
+            }
+
+            using (var reader = new BinaryReader(stream, System.Text.Encoding.ASCII, true))
+            {
+                BmpHeader header = BmpHeader.Read(reader, streamLength);
+
+                // Posiciona o ponteiro no início exato dos dados de pixel (bfOffBits)
+                if (stream.Position != header.OffBits)
+                {
+                    if (stream.CanSeek)
+                    {
+                        stream.Seek(header.OffBits, SeekOrigin.Begin);
+                    }
+                    else
+                    {
+                        long bytesToSkip = header.OffBits - stream.Position;
+                        if (bytesToSkip > 0)
+                        {
+                            byte[] dummy = new byte[bytesToSkip];
+                            int read = stream.Read(dummy, 0, dummy.Length);
+                            if (read < bytesToSkip)
+                            {
+                                throw new CorruptDataException("Fim inesperado do fluxo ao buscar os dados de pixel.");
+                            }
+                        }
+                    }
+                }
+
+                int width = header.Width;
+                int height = header.Height;
+                int bpp = header.BitCount;
+                int bytesPerPixel = bpp / 8;
+                int rowDataBytes = width * bytesPerPixel;
+                int stride = header.Stride;
+                int paddingBytes = stride - rowDataBytes;
+
+                var buffer = new PixelBuffer(width, height);
+                byte[] rawPixels = buffer.Pixels;
+
+                byte[] rowBuffer = new byte[stride];
+                bool isTopDown = header.IsTopDown;
+                bool hasNonZeroAlpha = false;
+
+                // Processa linha por linha respeitando a orientação do BMP
+                for (int i = 0; i < height; i++)
+                {
+                    int targetY = isTopDown ? i : (height - 1 - i);
+
+                    int bytesRead = 0;
+                    while (bytesRead < stride)
+                    {
+                        int n = stream.Read(rowBuffer, bytesRead, stride - bytesRead);
+                        if (n <= 0)
+                        {
+                            throw new CorruptDataException(string.Format(
+                                "Fim prematuro de arquivo na scanline {0} de {1} do BMP.", i, height));
+                        }
+                        bytesRead += n;
+                    }
+
+                    int dstRowOffset = targetY * width * 4;
+
+                    if (bpp == 24)
+                    {
+                        for (int x = 0; x < width; x++)
+                        {
+                            int srcIdx = x * 3;
+                            int dstIdx = dstRowOffset + x * 4;
+
+                            byte b = rowBuffer[srcIdx];
+                            byte g = rowBuffer[srcIdx + 1];
+                            byte r = rowBuffer[srcIdx + 2];
+
+                            rawPixels[dstIdx] = r;
+                            rawPixels[dstIdx + 1] = g;
+                            rawPixels[dstIdx + 2] = b;
+                            rawPixels[dstIdx + 3] = 255; // 24 bits é sempre totalmente opaco
+                        }
+                    }
+                    else if (bpp == 32)
+                    {
+                        for (int x = 0; x < width; x++)
+                        {
+                            int srcIdx = x * 4;
+                            int dstIdx = dstRowOffset + x * 4;
+
+                            byte b = rowBuffer[srcIdx];
+                            byte g = rowBuffer[srcIdx + 1];
+                            byte r = rowBuffer[srcIdx + 2];
+                            byte a = rowBuffer[srcIdx + 3];
+
+                            if (a > 0) hasNonZeroAlpha = true;
+
+                            rawPixels[dstIdx] = r;
+                            rawPixels[dstIdx + 1] = g;
+                            rawPixels[dstIdx + 2] = b;
+                            rawPixels[dstIdx + 3] = a;
+                        }
+                    }
+                }
+
+                // Em BMP 32-bit (BI_RGB), imagens clássicas de GDI gravavam o 4º byte como 0x00 (BGRX)
+                // Se nenhum pixel da imagem tiver alfa > 0, normalizamos todos para 255 (opacos)
+                // para evitar que a imagem seja incorretamente tratada como invisível.
+                if (bpp == 32 && !hasNonZeroAlpha)
+                {
+                    for (int p = 3; p < rawPixels.Length; p += 4)
+                    {
+                        rawPixels[p] = 255;
+                    }
+                }
+
+                return buffer;
+            }
+        }
+    }
+}

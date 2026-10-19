@@ -41,6 +41,21 @@ namespace Lodino.Cli
                         OutputDirectory = Path.GetFullPath(outputDir)
                     };
 
+                    for (int i = 4; i < args.Length; i++)
+                    {
+                        string arg = args[i];
+                        if (arg.StartsWith("--", StringComparison.Ordinal))
+                        {
+                            int eq = arg.IndexOf('=');
+                            if (eq > 2)
+                            {
+                                string key = arg.Substring(2, eq - 2).Trim();
+                                string val = arg.Substring(eq + 1).Trim();
+                                req.Settings[key] = val;
+                            }
+                        }
+                    }
+
                     var result = engine.Convert(req, pct =>
                     {
                         Console.Write(string.Format("\rProgresso: {0}%", pct));
@@ -85,6 +100,18 @@ namespace Lodino.Cli
                         Console.WriteLine(string.Format("MIME Type: {0}", info.MimeType));
                         Console.WriteLine(string.Format("Tamanho: {0:N0} bytes", info.FileSizeBytes));
                         Console.WriteLine(string.Format("Suportado pelo Núcleo: {0}", info.IsSupported ? "Sim" : "Não"));
+                        if (info.Width > 0 && info.Height > 0)
+                        {
+                            Console.WriteLine(string.Format("Dimensões: {0}x{1}", info.Width, info.Height));
+                        }
+                        if (info.Metadata != null && info.Metadata.Count > 0)
+                        {
+                            Console.WriteLine("Metadados detalhados:");
+                            foreach (var kvp in info.Metadata)
+                            {
+                                Console.WriteLine(string.Format("  - {0}: {1}", kvp.Key, kvp.Value));
+                            }
+                        }
                         return 0;
                     }
                 }
@@ -120,12 +147,13 @@ namespace Lodino.Cli
         static void PrintHelp()
         {
             Console.WriteLine("Uso do Lodino Native CLI:");
-            Console.WriteLine("  Lodino.exe convert <caminho_entrada> <formato_destino> [pasta_destino]");
+            Console.WriteLine("  Lodino.exe convert <caminho_entrada> <formato_destino> [pasta_destino] [--chave=valor ...]");
             Console.WriteLine("  Lodino.exe inspect <caminho_arquivo>");
             Console.WriteLine("  Lodino.exe list-engines");
             Console.WriteLine("\nExemplos:");
             Console.WriteLine("  Lodino.exe convert dados.csv json");
             Console.WriteLine("  Lodino.exe convert config.ini json .\\saida");
+            Console.WriteLine("  Lodino.exe convert foto.bmp bmp .\\saida --width=640 --height=480 --watermarkText=\"LODINO\"");
         }
     }
 }
