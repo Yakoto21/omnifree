@@ -334,3 +334,26 @@ O motor `image-jpeg` registra-se no `EngineRegistry` e atende:
 3. `bmp -> jpeg/jpg`: Codificação de bitmaps Windows para JPEG com qualidade e subamostragem selecionáveis.
 4. `jpeg/jpg -> png`: Conversão para PNG Truecolor de 24 bits.
 5. `png -> jpeg/jpg`: Conversão de PNG Truecolor (com mescla sobreposta de transparência) para JPEG.
+
+### 7.9 Organização de Varreduras (Scans): Baseline Single-Scan e Multiscan Não-Intercalado
+
+Conforme a norma ISO/IEC 10918-1 / ITU-T T.81 (§4.8, §4.10, §A.2.3 e §B.2.3), o processo Baseline Sequential DCT (SOF0) suporta dados organizados tanto em varredura única intercalada quanto em múltiplas varreduras independentes:
+
+1. **Varredura Única Intercalada ($N_s = N_f$):**
+   - Todos os componentes (Y, Cb, Cr) são multiplexados bloco a bloco em cada Unidade Mínima Codificada (MCU) espacial.
+   - Padrão predominante em fotos digitais de alta compressão.
+2. **Múltiplas Varreduras Não-Intercaladas ($N_s = 1$ por Scan):**
+   - Cada componente do quadro SOF0 é codificado em sua própria varredura SOS independente (ex: Scan 1 = Y, Scan 2 = Cb, Scan 3 = Cr).
+   - Em conformidade com ITU-T T.81 §A.2.3: Quando $N_s = 1$, **1 MCU equivale a exatamente 1 bloco 8x8 de dados**.
+   - A grade de blocos de cada componente é calculada a partir de suas dimensões nativas:
+     $$X_i = \left\lceil \frac{\text{width} \times H_i}{H_{max}} \right\rceil, \quad Y_i = \left\lceil \frac{\text{height} \times V_i}{V_{max}} \right\rceil$$
+     $$\text{blocksX}_i = \left\lceil \frac{X_i}{8} \right\rceil, \quad \text{blocksY}_i = \left\lceil \frac{Y_i}{8} \right\rceil$$
+3. **Preditores DC e Intervalos de Reinício (DRI / RSTm):**
+   - Conforme ITU-T T.81 §F.1.1.5.1, o preditor DC (`PRED`) é obrigatoriamente inicializado em 0 no início de **cada** scan SOS.
+   - Em varreduras não-intercaladas ($N_s = 1$), os marcadores de reinício (`RST0`..`RST7`) operam na cadência de $R_i$ blocos 8x8.
+   - Em varreduras intercaladas ($N_s > 1$), operam na cadência de $R_i$ MCUs completas.
+4. **Segmentos Intercalados entre Scans:**
+   - Tabelas de quantização (`DQT`), tabelas de Huffman (`DHT`) e intervalos de reinício (`DRI`) podem surgir entre varreduras consecutivas, sendo absorvidos e atualizados dinamicamente pelo decodificador.
+5. **Fronteira Arquitetural e Limitações Conhecidas:**
+   - Scans intercalados parciais subamostrados ($1 < N_s < N_f$, como um scan isolado de Cb+Cr com subamostragem 4:2:0) utilizam a dimensão global de MCU do SOF0. Scans progressivos com parâmetros espectrais ($S_s \ne 0 \lor S_e \ne 63$) são formalmente rejeitados com `UnsupportedFormatException`.
+

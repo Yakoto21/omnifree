@@ -199,6 +199,14 @@ namespace Lodino.Tests
             RunTest("HARDENING JPEG: Sincronização SOF e metadados JFIF APP0 (DPI, unidades) no Inspect (D-04, D-05)", Test_Hardening_Jpeg_Engine_Inspect_SofSync_And_JfifApp0);
             RunTest("HARDENING JPEG: Codificação e decodificação monocromática Grayscale 1:1 (D-08)", Test_Hardening_Jpeg_Grayscale_Encoder_Roundtrip);
             RunTest("HARDENING JPEG: Rejeição de streams JPEG não-seekable que excedam o limite de entrada", Test_Hardening_Jpeg_NonSeekable_Stream_LimitExceeded);
+            RunTest("JPEG MULTISCAN: Decodificação 4:2:0 em 3 varreduras independentes (dimensões ímpares 24x37)", Test_Jpeg_Multiscan_420_OddDimensions);
+            RunTest("JPEG MULTISCAN: Decodificação 4:4:4 em 3 varreduras independentes com alta fidelidade (16x16)", Test_Jpeg_Multiscan_444_EvenDimensions);
+            RunTest("JPEG MULTISCAN: Reinicialização correta de preditores DC e marcadores DRI / RSTm por varredura", Test_Jpeg_Multiscan_With_RestartInterval_DRI);
+            RunTest("JPEG MULTISCAN: Definição dinâmica de tabelas DHT entre varreduras consecutivas", Test_Jpeg_Multiscan_With_DHT_Between_Scans);
+            RunTest("JPEG MULTISCAN (Segurança): Rejeição de componente ausente ao atingir marcador EOI", Test_Jpeg_Multiscan_Adversarial_MissingComponent_ThrowsCorruptDataException);
+            RunTest("JPEG MULTISCAN (Segurança): Rejeição de componente duplicado em varredura subsequente", Test_Jpeg_Multiscan_Adversarial_DuplicateScan_ThrowsCorruptDataException);
+            RunTest("JPEG MULTISCAN (Segurança): Rejeição de componente SOS com identificador inexistente", Test_Jpeg_Multiscan_Adversarial_InvalidCompId_ThrowsCorruptDataException);
+            RunTest("JPEG MULTISCAN (Segurança): Rejeição de parâmetros espectrais inválidos (Ss != 0 ou Se != 63)", Test_Jpeg_Multiscan_Adversarial_InvalidSpectralParams_ThrowsUnsupportedFormatException);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -3942,6 +3950,480 @@ namespace Lodino.Tests
                 Assert(threwLimit, "Stream JPEG não-seekable excedendo limite deve lançar ResourceLimitException");
             }
         }
+
+        #region Casos de Teste JPEG Multiscan
+
+        private static byte[] CreateMultiscanJpegBytes(int width, int height, bool subsample420, int restartInterval = 0, bool dhtBetweenScans = false)
+        {
+            var qLum = new JpegQuantizationTable(JpegQuantizationTable.StandardLuminance);
+            var qChr = new JpegQuantizationTable(JpegQuantizationTable.StandardChrominance);
+
+            var lumDc = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+            var lumAc = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceAcBits, JpegHuffmanTable.StandardLuminanceAcValues);
+            var chrDc = new JpegHuffmanTable(JpegHuffmanTable.StandardChrominanceDcBits, JpegHuffmanTable.StandardChrominanceDcValues);
+            var chrAc = new JpegHuffmanTable(JpegHuffmanTable.StandardChrominanceAcBits, JpegHuffmanTable.StandardChrominanceAcValues);
+
+            int maxH = subsample420 ? 2 : 1;
+            int maxV = subsample420 ? 2 : 1;
+
+            int compWidthY = (width * maxH + maxH - 1) / maxH;
+            int compHeightY = (height * maxV + maxV - 1) / maxV;
+            int blocksX_Y = (compWidthY + 7) / 8;
+            int blocksY_Y = (compHeightY + 7) / 8;
+
+            int compWidthC = (width + maxH - 1) / maxH;
+            int compHeightC = (height + maxV - 1) / maxV;
+            int blocksX_C = (compWidthC + 7) / 8;
+            int blocksY_C = (compHeightC + 7) / 8;
+
+            using (var ms = new MemoryStream())
+            {
+                // SOI
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+
+                // DQT
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 65 * 2));
+                ms.WriteByte(0x00);
+                ms.Write(qLum.ToZigzagBytes(), 0, 64);
+                ms.WriteByte(0x01);
+                ms.Write(qChr.ToZigzagBytes(), 0, 64);
+
+                // DRI
+                if (restartInterval > 0)
+                {
+                    ms.WriteByte(0xFF); ms.WriteByte(0xDD);
+                    ms.WriteByte(0x00); ms.WriteByte(0x04);
+                    ms.WriteByte((byte)(restartInterval >> 8));
+                    ms.WriteByte((byte)(restartInterval & 0xFF));
+                }
+
+                // SOF0
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(17);
+                ms.WriteByte(8);
+                ms.WriteByte((byte)(height >> 8)); ms.WriteByte((byte)(height & 0xFF));
+                ms.WriteByte((byte)(width >> 8)); ms.WriteByte((byte)(width & 0xFF));
+                ms.WriteByte(3);
+                ms.WriteByte(1); ms.WriteByte((byte)((maxH << 4) | maxV)); ms.WriteByte(0);
+                ms.WriteByte(2); ms.WriteByte(0x11); ms.WriteByte(1);
+                ms.WriteByte(3); ms.WriteByte(0x11); ms.WriteByte(1);
+
+                Action<int, int, byte[], byte[]> writeDht = (tc, tid, bits, vals) =>
+                {
+                    ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                    int len = 2 + 1 + 16 + vals.Length;
+                    ms.WriteByte((byte)(len >> 8)); ms.WriteByte((byte)(len & 0xFF));
+                    ms.WriteByte((byte)((tc << 4) | tid));
+                    ms.Write(bits, 0, 16);
+                    ms.Write(vals, 0, vals.Length);
+                };
+
+                // Emit DHT Lum
+                writeDht(0, 0, JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+                writeDht(1, 0, JpegHuffmanTable.StandardLuminanceAcBits, JpegHuffmanTable.StandardLuminanceAcValues);
+
+                if (!dhtBetweenScans)
+                {
+                    // Emit DHT Chr upfront
+                    writeDht(0, 1, JpegHuffmanTable.StandardChrominanceDcBits, JpegHuffmanTable.StandardChrominanceDcValues);
+                    writeDht(1, 1, JpegHuffmanTable.StandardChrominanceAcBits, JpegHuffmanTable.StandardChrominanceAcValues);
+                }
+
+                // Helper para emitir scan não-intercalado (Ns = 1)
+                Action<int, int, int, JpegHuffmanTable, JpegHuffmanTable, int> emitScan = (compId, blocksX, blocksY, dcT, acT, tableSel) =>
+                {
+                    ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                    ms.WriteByte(0x00); ms.WriteByte(8);
+                    ms.WriteByte(1); // 1 componente
+                    ms.WriteByte((byte)compId);
+                    ms.WriteByte((byte)tableSel);
+                    ms.WriteByte(0); ms.WriteByte(63); ms.WriteByte(0);
+
+                    var writer = new JpegBitWriter(ms);
+                    int mcuIdx = 0;
+                    int nextRst = JpegMarker.RST0;
+
+                    for (int by = 0; by < blocksY; by++)
+                    {
+                        for (int bx = 0; bx < blocksX; bx++)
+                        {
+                            if (restartInterval > 0 && mcuIdx > 0 && (mcuIdx % restartInterval) == 0)
+                            {
+                                writer.Flush();
+                                ms.WriteByte((byte)(nextRst >> 8));
+                                ms.WriteByte((byte)(nextRst & 0xFF));
+                                nextRst++;
+                                if (nextRst > JpegMarker.RST7) nextRst = JpegMarker.RST0;
+                            }
+
+                            // Bloco de teste: DC diff = 0, AC = EOB
+                            writer.WriteSymbol(0x00, dcT);
+                            writer.WriteSymbol(0x00, acT); // EOB
+                            mcuIdx++;
+                        }
+                    }
+                    writer.Flush();
+                };
+
+                // Scan 1: Y
+                emitScan(1, blocksX_Y, blocksY_Y, lumDc, lumAc, 0x00);
+
+                if (dhtBetweenScans)
+                {
+                    // Emit DHT Chr dinamicamente entre scans
+                    writeDht(0, 1, JpegHuffmanTable.StandardChrominanceDcBits, JpegHuffmanTable.StandardChrominanceDcValues);
+                    writeDht(1, 1, JpegHuffmanTable.StandardChrominanceAcBits, JpegHuffmanTable.StandardChrominanceAcValues);
+                }
+
+                // Scan 2: Cb
+                emitScan(2, blocksX_C, blocksY_C, chrDc, chrAc, 0x11);
+
+                // Scan 3: Cr
+                emitScan(3, blocksX_C, blocksY_C, chrDc, chrAc, 0x11);
+
+                // EOI
+                ms.WriteByte(0xFF); ms.WriteByte(0xD9);
+
+                return ms.ToArray();
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_420_OddDimensions()
+        {
+            byte[] bytes = CreateMultiscanJpegBytes(24, 37, subsample420: true);
+            using (var ms = new MemoryStream(bytes))
+            {
+                var buffer = JpegDecoder.Decode(ms);
+                AssertEqual(24, buffer.Width, "Largura multiscan 4:2:0");
+                AssertEqual(37, buffer.Height, "Altura multiscan 4:2:0");
+
+                for (int y = 0; y < 37; y++)
+                {
+                    for (int x = 0; x < 24; x++)
+                    {
+                        var p = buffer.GetPixel(x, y);
+                        AssertEqual((byte)255, p.A, "Canal alfa em multiscan deve ser 255");
+                    }
+                }
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_444_EvenDimensions()
+        {
+            byte[] bytes = CreateMultiscanJpegBytes(16, 16, subsample420: false);
+            using (var ms = new MemoryStream(bytes))
+            {
+                var buffer = JpegDecoder.Decode(ms);
+                AssertEqual(16, buffer.Width, "Largura multiscan 4:4:4");
+                AssertEqual(16, buffer.Height, "Altura multiscan 4:4:4");
+                for (int y = 0; y < 16; y++)
+                {
+                    for (int x = 0; x < 16; x++)
+                    {
+                        var p = buffer.GetPixel(x, y);
+                        AssertEqual((byte)255, p.A, "Canal alfa em multiscan deve ser 255");
+                    }
+                }
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_With_RestartInterval_DRI()
+        {
+            byte[] bytes = CreateMultiscanJpegBytes(32, 32, subsample420: true, restartInterval: 4);
+            using (var ms = new MemoryStream(bytes))
+            {
+                var buffer = JpegDecoder.Decode(ms);
+                AssertEqual(32, buffer.Width, "Largura multiscan com DRI");
+                AssertEqual(32, buffer.Height, "Altura multiscan com DRI");
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_With_DHT_Between_Scans()
+        {
+            byte[] bytes = CreateMultiscanJpegBytes(16, 16, subsample420: false, dhtBetweenScans: true);
+            using (var ms = new MemoryStream(bytes))
+            {
+                var buffer = JpegDecoder.Decode(ms);
+                AssertEqual(16, buffer.Width, "Largura multiscan com DHT entre scans");
+                AssertEqual(16, buffer.Height, "Altura multiscan com DHT entre scans");
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_Adversarial_MissingComponent_ThrowsCorruptDataException()
+        {
+            var qLum = new JpegQuantizationTable(JpegQuantizationTable.StandardLuminance);
+            var lumDc = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+            var lumAc = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceAcBits, JpegHuffmanTable.StandardLuminanceAcValues);
+
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+
+                // DQT
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00);
+                ms.Write(qLum.ToZigzagBytes(), 0, 64);
+
+                // SOF0 com 3 componentes
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(17);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(3);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+                ms.WriteByte(2); ms.WriteByte(0x11); ms.WriteByte(0);
+                ms.WriteByte(3); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                // DHT Lum
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                int acLen = 2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length;
+                ms.WriteByte((byte)(acLen >> 8)); ms.WriteByte((byte)(acLen & 0xFF));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                // Scan 1: Y
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(0); ms.WriteByte(63); ms.WriteByte(0);
+                var writer = new JpegBitWriter(ms);
+                writer.WriteSymbol(0x00, lumDc);
+                writer.WriteSymbol(0x00, lumAc);
+                writer.Flush();
+
+                // EOI direto sem enviar Cb e Cr!
+                ms.WriteByte(0xFF); ms.WriteByte(0xD9);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.IndexOf("decodificação completa", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        ex.Message.IndexOf("não foi decodificado", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Fluxo JPEG multiscan com componentes ausentes ao atingir EOI deve lançar CorruptDataException");
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_Adversarial_DuplicateScan_ThrowsCorruptDataException()
+        {
+            var qLum = new JpegQuantizationTable(JpegQuantizationTable.StandardLuminance);
+            var lumDc = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+            var lumAc = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceAcBits, JpegHuffmanTable.StandardLuminanceAcValues);
+
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+
+                // DQT
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00);
+                ms.Write(qLum.ToZigzagBytes(), 0, 64);
+
+                // SOF0 (3 componentes)
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(17);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(3);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+                ms.WriteByte(2); ms.WriteByte(0x11); ms.WriteByte(0);
+                ms.WriteByte(3); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                // DHT
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                int acLen = 2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length;
+                ms.WriteByte((byte)(acLen >> 8)); ms.WriteByte((byte)(acLen & 0xFF));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                // Scan 1: Componente 1
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(0); ms.WriteByte(63); ms.WriteByte(0);
+                var writer1 = new JpegBitWriter(ms);
+                writer1.WriteSymbol(0x00, lumDc);
+                writer1.WriteSymbol(0x00, lumAc);
+                writer1.Flush();
+
+                // Scan 2: Componente 1 DUPLICADO!
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(0); ms.WriteByte(63); ms.WriteByte(0);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.IndexOf("já foi decodificado", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Componente duplicado em varredura subsequente deve lançar CorruptDataException");
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_Adversarial_InvalidCompId_ThrowsCorruptDataException()
+        {
+            var qLum = new JpegQuantizationTable(JpegQuantizationTable.StandardLuminance);
+
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+
+                // DQT
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00);
+                ms.Write(qLum.ToZigzagBytes(), 0, 64);
+
+                // SOF0 (3 componentes: 1, 2, 3)
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(17);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(3);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+                ms.WriteByte(2); ms.WriteByte(0x11); ms.WriteByte(0);
+                ms.WriteByte(3); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                // DHT
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                int acLen = 2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length;
+                ms.WriteByte((byte)(acLen >> 8)); ms.WriteByte((byte)(acLen & 0xFF));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                // SOS com compId = 99 (inexistente no SOF0)
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(99); ms.WriteByte(0x00);
+                ms.WriteByte(0); ms.WriteByte(63); ms.WriteByte(0);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.IndexOf("não corresponde", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Componente SOS inexistente no SOF0 deve lançar CorruptDataException");
+            }
+        }
+
+        private static void Test_Jpeg_Multiscan_Adversarial_InvalidSpectralParams_ThrowsUnsupportedFormatException()
+        {
+            var qLum = new JpegQuantizationTable(JpegQuantizationTable.StandardLuminance);
+
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+
+                // DQT
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00);
+                ms.Write(qLum.ToZigzagBytes(), 0, 64);
+
+                // SOF0
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                // DHT
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                int acLen = 2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length;
+                ms.WriteByte((byte)(acLen >> 8)); ms.WriteByte((byte)(acLen & 0xFF));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                // SOS com Ss=5 e Se=40 (seleção espectral progressiva inválida em Baseline)
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(5); ms.WriteByte(40); ms.WriteByte(0);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (UnsupportedFormatException ex)
+                {
+                    if (ex.Message.IndexOf("espectrais", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Parâmetros espectrais não-baseline no SOS devem lançar UnsupportedFormatException");
+            }
+        }
+
+        #endregion
 
         #endregion
 

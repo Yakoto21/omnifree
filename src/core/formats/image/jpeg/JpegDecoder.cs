@@ -19,6 +19,12 @@ namespace Lodino.Core.Formats.Image.Jpeg
             public int H;
             public int V;
             public int QTableId;
+        }
+
+        private class ScanComponentInfo
+        {
+            public int CompId;
+            public int CompIndex;
             public int DcTableId;
             public int AcTableId;
         }
@@ -77,15 +83,46 @@ namespace Lodino.Core.Formats.Image.Jpeg
             int restartInterval = 0;
 
             bool foundSof0 = false;
-            bool foundSos = false;
+            byte[] planeY = null;
+            byte[] planeCb = null;
+            byte[] planeCr = null;
+            bool[] componentDecoded = null;
+            int maxH = 1, maxV = 1;
+            int mcuCols = 0, mcuRows = 0;
+            int mcuWidth = 0, mcuHeight = 0;
+            int paddedWidth = 0, paddedHeight = 0;
+            int pendingMarker = 0;
 
-            // 2. Loop de leitura de marcadores
-            while (!foundSos)
+            // 2. Loop de leitura de marcadores e decodificação de varreduras (scans)
+            while (true)
             {
-                int marker = ReadNextMarker(stream);
+                int marker;
+                if (pendingMarker != 0)
+                {
+                    marker = pendingMarker;
+                    pendingMarker = 0;
+                }
+                else
+                {
+                    marker = ReadNextMarker(stream);
+                }
+
                 if (marker == JpegMarker.EOI)
                 {
-                    throw new CorruptDataException("Marcador EOI encontrado antes dos dados de varredura (SOS).");
+                    if (!foundSof0)
+                    {
+                        throw new CorruptDataException("Marcador EOI encontrado antes dos dados de varredura (SOS).");
+                    }
+                    for (int i = 0; i < components.Count; i++)
+                    {
+                        if (!componentDecoded[i])
+                        {
+                            throw new CorruptDataException(string.Format(
+                                "Marcador EOI encontrado antes da decodificação completa do componente {0}.",
+                                components[i].Id));
+                        }
+                    }
+                    break;
                 }
 
                 if (marker == JpegMarker.DQT)
@@ -108,6 +145,38 @@ namespace Lodino.Core.Formats.Image.Jpeg
                     }
                     ReadSof0(stream, out width, out height, out precision, out numComponents, components);
                     foundSof0 = true;
+                    componentDecoded = new bool[components.Count];
+
+                    maxH = 1;
+                    maxV = 1;
+                    for (int i = 0; i < components.Count; i++)
+                    {
+                        if (components[i].H > maxH) maxH = components[i].H;
+                        if (components[i].V > maxV) maxV = components[i].V;
+                    }
+
+                    // D-01: Valida que maxH e maxV são múltiplos exatos dos fatores de amostragem do componente
+                    for (int i = 0; i < components.Count; i++)
+                    {
+                        var comp = components[i];
+                        if ((maxH % comp.H) != 0 || (maxV % comp.V) != 0)
+                        {
+                            throw new CorruptDataException(string.Format(
+                                "Fatores de amostragem incompatíveis para componente {0}: maxH={1}, compH={2}, maxV={3}, compV={4}.",
+                                comp.Id, maxH, comp.H, maxV, comp.V));
+                        }
+                    }
+
+                    mcuWidth = maxH * 8;
+                    mcuHeight = maxV * 8;
+                    mcuCols = (width + mcuWidth - 1) / mcuWidth;
+                    mcuRows = (height + mcuHeight - 1) / mcuHeight;
+                    paddedWidth = mcuCols * mcuWidth;
+                    paddedHeight = mcuRows * mcuHeight;
+
+                    planeY = new byte[paddedWidth * paddedHeight];
+                    planeCb = (numComponents == 3) ? new byte[paddedWidth * paddedHeight] : null;
+                    planeCr = (numComponents == 3) ? new byte[paddedWidth * paddedHeight] : null;
                 }
                 else if (marker == JpegMarker.SOF1 || marker == JpegMarker.SOF2 || marker == JpegMarker.SOF3 ||
                          marker == JpegMarker.SOF5 || marker == JpegMarker.SOF6 || marker == JpegMarker.SOF7 ||
@@ -124,9 +193,23 @@ namespace Lodino.Core.Formats.Image.Jpeg
                     {
                         throw new CorruptDataException("Marcador SOS encontrado antes do cabeçalho de quadro SOF0.");
                     }
-                    ReadSos(stream, components);
-                    foundSos = true;
-                    break;
+
+                    var scanComponents = ReadSos(stream, components, componentDecoded);
+
+                    pendingMarker = DecodeSingleScan(stream, width, height, numComponents, components,
+                        scanComponents, qTables, dcTables, acTables, restartInterval,
+                        maxH, maxV, mcuCols, mcuRows, mcuWidth, mcuHeight, paddedWidth, paddedHeight,
+                        planeY, planeCb, planeCr, componentDecoded);
+
+                    bool allDone = true;
+                    for (int i = 0; i < componentDecoded.Length; i++)
+                    {
+                        if (!componentDecoded[i]) { allDone = false; break; }
+                    }
+                    if (allDone && pendingMarker == JpegMarker.EOI)
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -135,26 +218,42 @@ namespace Lodino.Core.Formats.Image.Jpeg
                 }
             }
 
-            // 3. Valida se tabelas de quantização e Huffman foram devidamente carregadas
-            for (int i = 0; i < components.Count; i++)
+            // 3. Monta PixelBuffer RGB reconstruído
+            var pixelBuffer = new PixelBuffer(width, height);
+
+            if (numComponents == 1)
             {
-                var comp = components[i];
-                if (qTables[comp.QTableId] == null)
+                // Monocromático (Grayscale)
+                for (int y = 0; y < height; y++)
                 {
-                    throw new CorruptDataException(string.Format("Tabela de quantização {0} requerida pelo componente {1} não foi definida.", comp.QTableId, comp.Id));
+                    int rowOffset = y * paddedWidth;
+                    for (int x = 0; x < width; x++)
+                    {
+                        byte lum = planeY[rowOffset + x];
+                        pixelBuffer.SetPixel(x, y, new PixelColor(lum, lum, lum, 255));
+                    }
                 }
-                if (dcTables[comp.DcTableId] == null)
+            }
+            else
+            {
+                // YCbCr 3 componentes
+                for (int y = 0; y < height; y++)
                 {
-                    throw new CorruptDataException(string.Format("Tabela Huffman DC {0} requerida pelo componente {1} não foi definida.", comp.DcTableId, comp.Id));
-                }
-                if (acTables[comp.AcTableId] == null)
-                {
-                    throw new CorruptDataException(string.Format("Tabela Huffman AC {0} requerida pelo componente {1} não foi definida.", comp.AcTableId, comp.Id));
+                    int rowOffset = y * paddedWidth;
+                    for (int x = 0; x < width; x++)
+                    {
+                        byte yVal = planeY[rowOffset + x];
+                        byte cbVal = planeCb[rowOffset + x];
+                        byte crVal = planeCr[rowOffset + x];
+
+                        byte r, g, b;
+                        JpegColorConverter.YCbCrToRgb(yVal, cbVal, crVal, out r, out g, out b);
+                        pixelBuffer.SetPixel(x, y, new PixelColor(r, g, b, 255));
+                    }
                 }
             }
 
-            // 4. Decodificação da Varredura (Scan)
-            return DecodeScan(stream, width, height, numComponents, components, qTables, dcTables, acTables, restartInterval);
+            return pixelBuffer;
         }
 
         private static int ReadNextMarker(Stream stream)
@@ -386,14 +485,14 @@ namespace Lodino.Core.Formats.Image.Jpeg
             }
         }
 
-        private static void ReadSos(Stream stream, List<ComponentInfo> components)
+        private static List<ScanComponentInfo> ReadSos(Stream stream, List<ComponentInfo> components, bool[] componentDecoded)
         {
             int length = ReadBigEndian16(stream);
             int numScanComponents = stream.ReadByte();
 
-            if (numScanComponents != components.Count)
+            if (numScanComponents < 1 || numScanComponents > components.Count)
             {
-                throw new UnsupportedFormatException("Varreduras parciais ou progressivas não são suportadas em JPEG Baseline.");
+                throw new CorruptDataException(string.Format("Número inválido de componentes no cabeçalho SOS: {0}.", numScanComponents));
             }
 
             int expectedLength = 6 + numScanComponents * 2;
@@ -402,15 +501,26 @@ namespace Lodino.Core.Formats.Image.Jpeg
                 throw new CorruptDataException(string.Format("Comprimento de segmento SOS inválido ({0} bytes, esperado {1}).", length, expectedLength));
             }
 
+            var scanComponents = new List<ScanComponentInfo>(numScanComponents);
             for (int i = 0; i < numScanComponents; i++)
             {
                 int compId = stream.ReadByte();
                 int tables = stream.ReadByte();
 
-                var comp = components.Find(c => c.Id == compId);
-                if (comp == null)
+                int compIndex = components.FindIndex(c => c.Id == compId);
+                if (compIndex < 0)
                 {
                     throw new CorruptDataException(string.Format("Componente SOS {0} não corresponde aos componentes definidos no SOF0.", compId));
+                }
+
+                if (scanComponents.Exists(sc => sc.CompId == compId))
+                {
+                    throw new CorruptDataException(string.Format("Componente {0} duplicado no mesmo cabeçalho SOS.", compId));
+                }
+
+                if (componentDecoded != null && componentDecoded[compIndex])
+                {
+                    throw new CorruptDataException(string.Format("Componente {0} já foi decodificado em uma varredura anterior.", compId));
                 }
 
                 int dcTableId = (tables >> 4) & 0x0F;
@@ -424,8 +534,13 @@ namespace Lodino.Core.Formats.Image.Jpeg
                         compId, dcTableId, acTableId));
                 }
 
-                comp.DcTableId = dcTableId;
-                comp.AcTableId = acTableId;
+                scanComponents.Add(new ScanComponentInfo
+                {
+                    CompId = compId,
+                    CompIndex = compIndex,
+                    DcTableId = dcTableId,
+                    AcTableId = acTableId
+                });
             }
 
             int ss = stream.ReadByte();
@@ -436,195 +551,225 @@ namespace Lodino.Core.Formats.Image.Jpeg
             {
                 throw new UnsupportedFormatException("Parâmetros espectrais SOS não conformes com o perfil Baseline (Ss=0, Se=63, Ah=Al=0).");
             }
+
+            return scanComponents;
         }
 
-        private static PixelBuffer DecodeScan(Stream stream, int width, int height, int numComponents,
-            List<ComponentInfo> components, JpegQuantizationTable[] qTables,
-            JpegHuffmanTable[] dcTables, JpegHuffmanTable[] acTables, int restartInterval)
+        private static int DecodeSingleScan(Stream stream, int width, int height, int numComponents,
+            List<ComponentInfo> components, List<ScanComponentInfo> scanComponents,
+            JpegQuantizationTable[] qTables, JpegHuffmanTable[] dcTables, JpegHuffmanTable[] acTables,
+            int restartInterval, int maxH, int maxV, int mcuCols, int mcuRows,
+            int mcuWidth, int mcuHeight, int paddedWidth, int paddedHeight,
+            byte[] planeY, byte[] planeCb, byte[] planeCr, bool[] componentDecoded)
         {
             // Valida pré-requisitos: existência das tabelas de quantização e Huffman referenciadas
-            for (int i = 0; i < components.Count; i++)
+            for (int i = 0; i < scanComponents.Count; i++)
             {
-                var comp = components[i];
+                var sc = scanComponents[i];
+                var comp = components[sc.CompIndex];
                 if (qTables[comp.QTableId] == null)
                 {
                     throw new CorruptDataException(string.Format(
                         "Tabela de quantização {0} referenciada pelo componente {1} não foi definida no fluxo.",
-                        comp.QTableId, comp.Id));
+                        comp.QTableId, sc.CompId));
                 }
-                if (dcTables[comp.DcTableId] == null)
+                if (dcTables[sc.DcTableId] == null)
                 {
                     throw new CorruptDataException(string.Format(
                         "Tabela Huffman DC {0} referenciada pelo componente {1} não foi definida no fluxo.",
-                        comp.DcTableId, comp.Id));
+                        sc.DcTableId, sc.CompId));
                 }
-                if (acTables[comp.AcTableId] == null)
+                if (acTables[sc.AcTableId] == null)
                 {
                     throw new CorruptDataException(string.Format(
                         "Tabela Huffman AC {0} referenciada pelo componente {1} não foi definida no fluxo.",
-                        comp.AcTableId, comp.Id));
+                        sc.AcTableId, sc.CompId));
                 }
             }
-
-            int maxH = 1;
-            int maxV = 1;
-            for (int i = 0; i < components.Count; i++)
-            {
-                if (components[i].H > maxH) maxH = components[i].H;
-                if (components[i].V > maxV) maxV = components[i].V;
-            }
-
-            // D-01: Valida que maxH e maxV são múltiplos exatos dos fatores de amostragem do componente
-            for (int i = 0; i < components.Count; i++)
-            {
-                var comp = components[i];
-                if ((maxH % comp.H) != 0 || (maxV % comp.V) != 0)
-                {
-                    throw new CorruptDataException(string.Format(
-                        "Fatores de amostragem incompatíveis para componente {0}: maxH={1}, compH={2}, maxV={3}, compV={4}.",
-                        comp.Id, maxH, comp.H, maxV, comp.V));
-                }
-            }
-
-            int mcuWidth = maxH * 8;
-            int mcuHeight = maxV * 8;
-            int mcuCols = (width + mcuWidth - 1) / mcuWidth;
-            int mcuRows = (height + mcuHeight - 1) / mcuHeight;
-
-            int paddedWidth = mcuCols * mcuWidth;
-            int paddedHeight = mcuRows * mcuHeight;
-
-            byte[] planeY = new byte[paddedWidth * paddedHeight];
-            byte[] planeCb = (numComponents == 3) ? new byte[paddedWidth * paddedHeight] : null;
-            byte[] planeCr = (numComponents == 3) ? new byte[paddedWidth * paddedHeight] : null;
 
             var reader = new JpegBitReader(stream);
-            int[] dcPredictors = new int[components.Count];
-            int mcuIndex = 0;
-            int expectedRestartMarker = JpegMarker.RST0;
-
             int[] blockZigzag = new int[64];
             float[] blockFloat = new float[64];
             byte[] blockDecoded = new byte[64];
 
-            for (int mcuY = 0; mcuY < mcuRows; mcuY++)
+            int mcuIndex = 0;
+            int expectedRestartMarker = JpegMarker.RST0;
+
+            if (scanComponents.Count == 1)
             {
-                for (int mcuX = 0; mcuX < mcuCols; mcuX++)
+                // -------------------------------------------------------------
+                // SCAN NÃO INTERCALADO (Ns = 1)
+                // Conforme ITU-T T.81 §A.2.3: 1 MCU = 1 data unit (bloco 8x8)
+                // -------------------------------------------------------------
+                var sc = scanComponents[0];
+                int cIndex = sc.CompIndex;
+                var comp = components[cIndex];
+                var qTable = qTables[comp.QTableId];
+                var dcTable = dcTables[sc.DcTableId];
+                var acTable = acTables[sc.AcTableId];
+                byte[] targetPlane = (cIndex == 0) ? planeY : (cIndex == 1 ? planeCb : planeCr);
+
+                int compSamplesW = (width * comp.H + maxH - 1) / maxH;
+                int compSamplesH = (height * comp.V + maxV - 1) / maxV;
+                int blocksX = (compSamplesW + 7) / 8;
+                int blocksY = (compSamplesH + 7) / 8;
+
+                int scaleX = maxH / comp.H;
+                int scaleY = maxV / comp.V;
+
+                int dcPredictor = 0; // PRED inicializado em 0 para cada scan (ITU-T T.81 §F.1.1.5.1)
+
+                for (int by = 0; by < blocksY; by++)
                 {
-                    // Tratamento de Restart Interval (DRI / RSTm)
-                    if (restartInterval > 0 && mcuIndex > 0 && (mcuIndex % restartInterval) == 0)
+                    for (int bx = 0; bx < blocksX; bx++)
                     {
-                        reader.AlignToByte();
-                        // Lê próximo marcador de reinício se não foi capturado
-                        int rstMarker = reader.UnreadMarker;
-                        if (rstMarker == 0)
+                        if (restartInterval > 0 && mcuIndex > 0 && (mcuIndex % restartInterval) == 0)
                         {
-                            rstMarker = ReadNextMarker(stream);
-                        }
-
-                        if (rstMarker != expectedRestartMarker)
-                        {
-                            throw new CorruptDataException(string.Format("Marcador de reinício esperado 0x{0:X4}, encontrado 0x{1:X4}.", expectedRestartMarker, rstMarker));
-                        }
-
-                        // Reinicia DC predictors e avança esperado RSTm
-                        for (int c = 0; c < dcPredictors.Length; c++) dcPredictors[c] = 0;
-                        reader.ResetRestart();
-
-                        expectedRestartMarker++;
-                        if (expectedRestartMarker > JpegMarker.RST7)
-                        {
-                            expectedRestartMarker = JpegMarker.RST0;
-                        }
-                    }
-
-                    // Processa componentes da MCU
-                    for (int c = 0; c < components.Count; c++)
-                    {
-                        var comp = components[c];
-                        var qTable = qTables[comp.QTableId];
-                        var dcTable = dcTables[comp.DcTableId];
-                        var acTable = acTables[comp.AcTableId];
-
-                        for (int v = 0; v < comp.V; v++)
-                        {
-                            for (int h = 0; h < comp.H; h++)
+                            reader.AlignToByte();
+                            int rstMarker = reader.UnreadMarker;
+                            if (rstMarker == 0)
                             {
-                                // Decodifica bloco 8x8 de coeficientes
-                                DecodeBlock(reader, dcTable, acTable, ref dcPredictors[c], blockZigzag);
+                                rstMarker = ReadNextMarker(stream);
+                            }
 
-                                // Desquantização: dezigzag e multiplica pela tabela Q
-                                for (int z = 0; z < 64; z++)
-                                {
-                                    int naturalIndex = JpegQuantizationTable.ZigzagToNatural[z];
-                                    blockFloat[naturalIndex] = blockZigzag[z] * qTable.Elements[naturalIndex];
-                                }
+                            if (rstMarker != expectedRestartMarker)
+                            {
+                                throw new CorruptDataException(string.Format(
+                                    "Marcador de reinício esperado 0x{0:X4}, encontrado 0x{1:X4}.",
+                                    expectedRestartMarker, rstMarker));
+                            }
 
-                                // IDCT 2D
-                                FastDct.InverseTransform(blockFloat, blockDecoded);
+                            dcPredictor = 0;
+                            reader.ResetRestart();
 
-                                // Armazena amostras decodificadas no plano (D-09: mapeamento explícito por componente)
-                                byte[] targetPlane = (c == 0) ? planeY : (c == 1 ? planeCb : planeCr);
-                                if (comp.H == maxH && comp.V == maxV)
-                                {
-                                    // Bloco com amostragem total
-                                    int blockPixelX = mcuX * mcuWidth + h * 8;
-                                    int blockPixelY = mcuY * mcuHeight + v * 8;
-                                    CopyBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth);
-                                }
-                                else
-                                {
-                                    // Bloco subamostrado (ex: Cb ou Cr em 4:2:0 ou 4:2:2)
-                                    int scaleX = maxH / comp.H;
-                                    int scaleY = maxV / comp.V;
-                                    int blockPixelX = mcuX * mcuWidth + h * (8 * scaleX);
-                                    int blockPixelY = mcuY * mcuHeight + v * (8 * scaleY);
-                                    CopyAndUpsampleBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth, scaleX, scaleY);
-                                }
+                            expectedRestartMarker++;
+                            if (expectedRestartMarker > JpegMarker.RST7)
+                            {
+                                expectedRestartMarker = JpegMarker.RST0;
                             }
                         }
+
+                        DecodeBlock(reader, dcTable, acTable, ref dcPredictor, blockZigzag);
+
+                        for (int z = 0; z < 64; z++)
+                        {
+                            int naturalIndex = JpegQuantizationTable.ZigzagToNatural[z];
+                            blockFloat[naturalIndex] = blockZigzag[z] * qTable.Elements[naturalIndex];
+                        }
+
+                        FastDct.InverseTransform(blockFloat, blockDecoded);
+
+                        if (scaleX == 1 && scaleY == 1)
+                        {
+                            int blockPixelX = bx * 8;
+                            int blockPixelY = by * 8;
+                            CopyBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth);
+                        }
+                        else
+                        {
+                            int blockPixelX = bx * (8 * scaleX);
+                            int blockPixelY = by * (8 * scaleY);
+                            CopyAndUpsampleBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth, scaleX, scaleY);
+                        }
+
+                        mcuIndex++;
                     }
-
-                    mcuIndex++;
                 }
-            }
 
-            // 5. Monta PixelBuffer RGB reconstruído
-            var pixelBuffer = new PixelBuffer(width, height);
-
-            if (numComponents == 1)
-            {
-                // Monocromático (Grayscale)
-                for (int y = 0; y < height; y++)
-                {
-                    int rowOffset = y * paddedWidth;
-                    for (int x = 0; x < width; x++)
-                    {
-                        byte lum = planeY[rowOffset + x];
-                        pixelBuffer.SetPixel(x, y, new PixelColor(lum, lum, lum, 255));
-                    }
-                }
+                componentDecoded[cIndex] = true;
             }
             else
             {
-                // YCbCr 3 componentes
-                for (int y = 0; y < height; y++)
-                {
-                    int rowOffset = y * paddedWidth;
-                    for (int x = 0; x < width; x++)
-                    {
-                        byte yVal = planeY[rowOffset + x];
-                        byte cbVal = planeCb[rowOffset + x];
-                        byte crVal = planeCr[rowOffset + x];
+                // -------------------------------------------------------------
+                // SCAN INTERCALADO (Ns > 1)
+                // Conforme ITU-T T.81 §A.2.3: MCUs contêm H_i x V_i blocos por componente
+                // -------------------------------------------------------------
+                int[] dcPredictors = new int[scanComponents.Count];
 
-                        byte r, g, b;
-                        JpegColorConverter.YCbCrToRgb(yVal, cbVal, crVal, out r, out g, out b);
-                        pixelBuffer.SetPixel(x, y, new PixelColor(r, g, b, 255));
+                for (int mcuY = 0; mcuY < mcuRows; mcuY++)
+                {
+                    for (int mcuX = 0; mcuX < mcuCols; mcuX++)
+                    {
+                        if (restartInterval > 0 && mcuIndex > 0 && (mcuIndex % restartInterval) == 0)
+                        {
+                            reader.AlignToByte();
+                            int rstMarker = reader.UnreadMarker;
+                            if (rstMarker == 0)
+                            {
+                                rstMarker = ReadNextMarker(stream);
+                            }
+
+                            if (rstMarker != expectedRestartMarker)
+                            {
+                                throw new CorruptDataException(string.Format(
+                                    "Marcador de reinício esperado 0x{0:X4}, encontrado 0x{1:X4}.",
+                                    expectedRestartMarker, rstMarker));
+                            }
+
+                            for (int c = 0; c < dcPredictors.Length; c++) dcPredictors[c] = 0;
+                            reader.ResetRestart();
+
+                            expectedRestartMarker++;
+                            if (expectedRestartMarker > JpegMarker.RST7)
+                            {
+                                expectedRestartMarker = JpegMarker.RST0;
+                            }
+                        }
+
+                        for (int scIdx = 0; scIdx < scanComponents.Count; scIdx++)
+                        {
+                            var sc = scanComponents[scIdx];
+                            int c = sc.CompIndex;
+                            var comp = components[c];
+                            var qTable = qTables[comp.QTableId];
+                            var dcTable = dcTables[sc.DcTableId];
+                            var acTable = acTables[sc.AcTableId];
+                            byte[] targetPlane = (c == 0) ? planeY : (c == 1 ? planeCb : planeCr);
+
+                            for (int v = 0; v < comp.V; v++)
+                            {
+                                for (int h = 0; h < comp.H; h++)
+                                {
+                                    DecodeBlock(reader, dcTable, acTable, ref dcPredictors[scIdx], blockZigzag);
+
+                                    for (int z = 0; z < 64; z++)
+                                    {
+                                        int naturalIndex = JpegQuantizationTable.ZigzagToNatural[z];
+                                        blockFloat[naturalIndex] = blockZigzag[z] * qTable.Elements[naturalIndex];
+                                    }
+
+                                    FastDct.InverseTransform(blockFloat, blockDecoded);
+
+                                    if (comp.H == maxH && comp.V == maxV)
+                                    {
+                                        int blockPixelX = mcuX * mcuWidth + h * 8;
+                                        int blockPixelY = mcuY * mcuHeight + v * 8;
+                                        CopyBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth);
+                                    }
+                                    else
+                                    {
+                                        int scaleX = maxH / comp.H;
+                                        int scaleY = maxV / comp.V;
+                                        int blockPixelX = mcuX * mcuWidth + h * (8 * scaleX);
+                                        int blockPixelY = mcuY * mcuHeight + v * (8 * scaleY);
+                                        CopyAndUpsampleBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth, scaleX, scaleY);
+                                    }
+                                }
+                            }
+                        }
+
+                        mcuIndex++;
                     }
+                }
+
+                for (int scIdx = 0; scIdx < scanComponents.Count; scIdx++)
+                {
+                    componentDecoded[scanComponents[scIdx].CompIndex] = true;
                 }
             }
 
-            return pixelBuffer;
+            reader.AlignToByte();
+            return reader.UnreadMarker;
         }
 
         private static void DecodeBlock(JpegBitReader reader, JpegHuffmanTable dcTable, JpegHuffmanTable acTable, ref int dcPredictor, int[] blockZigzag)
