@@ -3,6 +3,8 @@ using System.IO;
 using System.Text;
 using Lodino.Core.Api;
 using Lodino.Core.Errors;
+using Lodino.Core.Formats.Audio;
+using Lodino.Core.Formats.Audio.Wav;
 using Lodino.Core.Formats.Data;
 using Lodino.Core.Formats.Image;
 using Lodino.Core.Formats.Image.Jpeg;
@@ -223,8 +225,38 @@ namespace Lodino.Tests
             RunTest("DESKTOP (Fila): Ciclo de vida da fila (Add, Remove, Clear e contadores)", Test_Desktop_ConversionManager_QueueLifecycle);
             RunTest("DESKTOP (Lote): Conversão assíncrona multithread de CSV -> JSON via ConversionManager", Test_Desktop_ConversionManager_BatchProcessing_CsvToJson);
             RunTest("DESKTOP (Lote Imagens): Conversão sequencial em lote BMP -> PNG e PNG -> JPG", Test_Desktop_ConversionManager_BatchProcessing_Image_BmpToPngAndPngToJpeg);
+            RunTest("DESKTOP (Lote Áudio): Conversão assíncrona WAV -> WAV com reamostragem e mixagem", Test_Desktop_ConversionManager_BatchProcessing_Audio_WavToWav);
             RunTest("DESKTOP (Resiliência): Isolamento estrito de falhas em lote (sucesso preservado em inputs mistos)", Test_Desktop_ConversionManager_ErrorIsolation_OnMalformedInput);
             RunTest("DESKTOP (Controle): Cancelamento cooperativo imediato de lote de conversões", Test_Desktop_ConversionManager_CooperativeCancellation);
+
+            // =================================================
+            //   LODINO NATIVE CORE — MOTOR PILOTO 4            
+            //   Módulo: Motor Nativo de Áudio RIFF/WAVE PCM    
+            // =================================================
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE CORE — MOTOR PILOTO 4            ");
+            Console.WriteLine("  Módulo: Motor Nativo de Áudio RIFF/WAVE PCM    ");
+            Console.WriteLine("=================================================\n");
+
+            RunTest("WAV: Round-trip 8-bit unsigned PCM Mono com preservação senoidal", Test_Wav_RoundTrip_8Bit_Mono);
+            RunTest("WAV: Round-trip 8-bit unsigned PCM Estéreo com canais assimétricos", Test_Wav_RoundTrip_8Bit_Stereo);
+            RunTest("WAV: Round-trip 16-bit signed PCM Mono com faixa dinâmica completa", Test_Wav_RoundTrip_16Bit_Mono);
+            RunTest("WAV: Round-trip 16-bit signed PCM Estéreo (fase invertida e silêncio)", Test_Wav_RoundTrip_16Bit_Stereo);
+            RunTest("WAV: Round-trip 24-bit packed PCM Mono e Estéreo (3 bytes por amostra)", Test_Wav_RoundTrip_24Bit_Mono_And_Stereo);
+            RunTest("WAV: Round-trip 32-bit signed PCM Mono e Estéreo (4 bytes por amostra)", Test_Wav_RoundTrip_32Bit_Mono_And_Stereo);
+            RunTest("WAV (RIFF): Alinhamento e byte de padding em chunks com tamanho ímpar", Test_Wav_RiffPadding_OddSizeChunk);
+            RunTest("WAV (Chunks Auxiliares): Salto seguro de chunks LIST, JUNK e metadados", Test_Wav_AuxiliaryChunks_SkipListAndJunk);
+            RunTest("WAV (Extensible): Suporte a cabeçalho WAVE_FORMAT_EXTENSIBLE com GUID PCM", Test_Wav_ExtensiblePcm_Guid);
+            RunTest("WAV (DSP): Conversão bidirecional de canais (Mono <-> Estéreo)", Test_Wav_ChannelConversion_MonoToStereo_And_StereoToMono);
+            RunTest("WAV (DSP): Reamostragem (Resampling) por interpolação linear", Test_Wav_Resampling_LinearInterpolation);
+            RunTest("WAV (DSP): Ganho linear de volume e normalização de pico de amplitude", Test_Wav_GainAndNormalization);
+            RunTest("WAV (Segurança): Rejeição de assinaturas mágicas inválidas e fluxos truncados", Test_Wav_Security_InvalidSignature_And_Truncation);
+            RunTest("WAV (Segurança): Rejeição estrita de compressões e bit depths não suportados", Test_Wav_Security_UnsupportedCompression_And_BitDepths);
+            RunTest("WAV (Segurança): Validação estrutural de BlockAlign, taxas e contagem de canais", Test_Wav_Security_InvalidBlockAlign_And_Channels);
+            RunTest("WAV (Segurança): Proteção contra arquivos e contagem de quadros que excedam o teto", Test_Wav_Security_ExceedFileAndFrameLimits);
+            RunTest("WAV (Engine): Inspeção completa de metadados e registro no EngineRegistry", Test_Wav_Engine_Inspect_And_Registry);
+            RunTest("WAV (Engine): Pipeline de conversão ponta a ponta com flags de transformação", Test_Wav_Engine_ConvertPipeline_WithSettings);
+            RunTest("WAV (Interoperabilidade): Validação de arquivo gerado via System.Media.SoundPlayer", Test_Wav_External_Interoperability_SystemSoundPlayer);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -4608,6 +4640,58 @@ namespace Lodino.Tests
             }
         }
 
+        private static void Test_Desktop_ConversionManager_BatchProcessing_Audio_WavToWav()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_dt_aud_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string wavFile = Path.Combine(tempDir, "input_sample.wav");
+                var buffer = new AudioBuffer(2, 44100, 16, 4410);
+                for (int i = 0; i < 4410; i++)
+                {
+                    buffer.SetSample(0, i, 0.4f);
+                    buffer.SetSample(1, i, -0.4f);
+                }
+                using (var fs = File.Create(wavFile))
+                {
+                    WavEncoder.Encode(buffer, fs);
+                }
+
+                var manager = new ConversionManager();
+                var job = manager.AddFile(wavFile, "wav");
+                var parameters = new System.Collections.Generic.Dictionary<string, string>
+                {
+                    { "sampleRate", "22050" },
+                    { "channels", "1" },
+                    { "bits", "24" }
+                };
+
+                using (var doneEvt = new ManualResetEvent(false))
+                {
+                    manager.BatchFinished += (t, s, f) => doneEvt.Set();
+                    manager.StartBatch("wav", tempDir, parameters);
+                    bool ok = doneEvt.WaitOne(10000);
+                    Assert(ok, "Conversão em lote WAV -> WAV deve terminar em menos de 10s");
+                    Assert(job.Status == JobStatus.Completed, "WAV -> WAV deve ter sucesso");
+                    Assert(File.Exists(job.DestinationPath), "Arquivo de áudio gerado deve existir");
+                    Assert(new FileInfo(job.DestinationPath).Length > 0, "Tamanho de saída > 0");
+
+                    using (var fs = File.OpenRead(job.DestinationPath))
+                    {
+                        var info = new WavEngine().Inspect(fs, job.DestinationPath);
+                        Assert(info.Metadata["SampleRate"] == "22050 Hz", "Taxa reamostrada para 22050 Hz");
+                        Assert(info.Metadata["Channels"] == "1 (Mono)", "Mixado para Mono");
+                        Assert(info.Metadata["BitsPerSample"] == "24 bits", "Convertido para 24 bits");
+                    }
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
         private static void Test_Desktop_ConversionManager_ErrorIsolation_OnMalformedInput()
         {
             string tempDir = Path.Combine(Path.GetTempPath(), "lodino_dt_err_" + Guid.NewGuid().ToString("N"));
@@ -4691,6 +4775,663 @@ namespace Lodino.Tests
                 if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
             }
         }
+
+        #region Módulo: Motor Nativo de Áudio RIFF/WAVE PCM (Fase 11A)
+
+        private static void Test_Wav_RoundTrip_8Bit_Mono()
+        {
+            int sampleRate = 44100;
+            int frameCount = 1000;
+            var buffer = new AudioBuffer(1, sampleRate, 8, frameCount);
+            for (int i = 0; i < frameCount; i++)
+            {
+                float t = (float)i / sampleRate;
+                float s = (float)Math.Sin(2.0 * Math.PI * 440.0 * t);
+                buffer.SetSample(0, i, s);
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(buffer, ms);
+                ms.Position = 0;
+                var decoded = WavDecoder.Decode(ms);
+
+                Assert(decoded.Channels == 1, "Mono deve ter 1 canal");
+                Assert(decoded.SampleRate == sampleRate, "SampleRate deve ser 44100");
+                Assert(decoded.BitsPerSample == 8, "BitsPerSample deve ser 8");
+                Assert(decoded.FrameCount == frameCount, "FrameCount deve ser 1000");
+
+                float maxErr = 0f;
+                for (int i = 0; i < frameCount; i++)
+                {
+                    float orig = buffer.GetSample(0, i);
+                    float dec = decoded.GetSample(0, i);
+                    float diff = Math.Abs(orig - dec);
+                    if (diff > maxErr) maxErr = diff;
+                }
+                Assert(maxErr < 0.015f, "Erro de quantização 8-bit deve ser menor que 0.015");
+            }
+        }
+
+        private static void Test_Wav_RoundTrip_8Bit_Stereo()
+        {
+            int sampleRate = 22050;
+            int frameCount = 500;
+            var buffer = new AudioBuffer(2, sampleRate, 8, frameCount);
+            for (int i = 0; i < frameCount; i++)
+            {
+                buffer.SetSample(0, i, (i % 20 < 10) ? 0.8f : -0.8f);
+                buffer.SetSample(1, i, (float)Math.Sin(i * 0.1));
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(buffer, ms);
+                ms.Position = 0;
+                var decoded = WavDecoder.Decode(ms);
+
+                Assert(decoded.Channels == 2, "Stereo deve ter 2 canais");
+                Assert(decoded.BitsPerSample == 8, "BitsPerSample deve ser 8");
+                Assert(decoded.FrameCount == frameCount, "FrameCount deve ser 500");
+
+                for (int c = 0; c < 2; c++)
+                {
+                    for (int i = 0; i < frameCount; i++)
+                    {
+                        float orig = buffer.GetSample(c, i);
+                        float dec = decoded.GetSample(c, i);
+                        Assert(Math.Abs(orig - dec) < 0.015f, "Canais estéreo 8-bit devem ser fiéis");
+                    }
+                }
+            }
+        }
+
+        private static void Test_Wav_RoundTrip_16Bit_Mono()
+        {
+            int sampleRate = 48000;
+            int frameCount = 2000;
+            var buffer = new AudioBuffer(1, sampleRate, 16, frameCount);
+            buffer.SetSample(0, 0, -1.0f);
+            buffer.SetSample(0, 1, 1.0f);
+            buffer.SetSample(0, 2, 0.0f);
+            for (int i = 3; i < frameCount; i++)
+            {
+                float val = ((float)i / frameCount) * 2.0f - 1.0f;
+                buffer.SetSample(0, i, val);
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(buffer, ms);
+                ms.Position = 0;
+                var decoded = WavDecoder.Decode(ms);
+
+                Assert(decoded.Channels == 1, "Mono 16-bit deve ter 1 canal");
+                Assert(decoded.BitsPerSample == 16, "BitsPerSample deve ser 16");
+                Assert(decoded.FrameCount == frameCount, "FrameCount deve ser 2000");
+
+                Assert(Math.Abs(decoded.GetSample(0, 0) - (-1.0f)) < 0.0001f, "Mínimo -1.0f preservado");
+                Assert(Math.Abs(decoded.GetSample(0, 1) - 1.0f) < 0.0001f, "Máximo 1.0f preservado");
+                Assert(Math.Abs(decoded.GetSample(0, 2) - 0.0f) < 0.0001f, "Silêncio 0.0f preservado");
+
+                for (int i = 3; i < frameCount; i++)
+                {
+                    float orig = buffer.GetSample(0, i);
+                    float dec = decoded.GetSample(0, i);
+                    Assert(Math.Abs(orig - dec) < 0.0001f, "Fidelidade 16-bit deve ter erro menor que 10^-4");
+                }
+            }
+        }
+
+        private static void Test_Wav_RoundTrip_16Bit_Stereo()
+        {
+            int sampleRate = 44100;
+            int frameCount = 1000;
+            var buffer = new AudioBuffer(2, sampleRate, 16, frameCount);
+            for (int i = 0; i < frameCount; i++)
+            {
+                float t = (float)i / sampleRate;
+                float left = (float)Math.Sin(2.0 * Math.PI * 220.0 * t) * 0.75f;
+                float right = -left;
+                buffer.SetSample(0, i, left);
+                buffer.SetSample(1, i, right);
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(buffer, ms);
+                ms.Position = 0;
+                var decoded = WavDecoder.Decode(ms);
+
+                Assert(decoded.Channels == 2, "Stereo 16-bit deve ter 2 canais");
+                Assert(decoded.BitsPerSample == 16, "BitsPerSample deve ser 16");
+                for (int i = 0; i < frameCount; i++)
+                {
+                    float l = decoded.GetSample(0, i);
+                    float r = decoded.GetSample(1, i);
+                    Assert(Math.Abs(l - buffer.GetSample(0, i)) < 0.0001f, "Canal esquerdo 16-bit fiel");
+                    Assert(Math.Abs(r - buffer.GetSample(1, i)) < 0.0001f, "Canal direito 16-bit fiel");
+                    Assert(Math.Abs(l + r) < 0.0001f, "Anti-fase estéreo preservada");
+                }
+            }
+        }
+
+        private static void Test_Wav_RoundTrip_24Bit_Mono_And_Stereo()
+        {
+            var mono = new AudioBuffer(1, 96000, 24, 1500);
+            for (int i = 0; i < 1500; i++)
+            {
+                mono.SetSample(0, i, (float)Math.Sin(i * 0.05) * 0.9f);
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(mono, ms);
+                ms.Position = 0;
+                var decMono = WavDecoder.Decode(ms);
+                Assert(decMono.Channels == 1, "Mono 24-bit");
+                Assert(decMono.BitsPerSample == 24, "24 bits");
+                Assert(decMono.SampleRate == 96000, "96000 Hz");
+                for (int i = 0; i < 1500; i++)
+                {
+                    Assert(Math.Abs(mono.GetSample(0, i) - decMono.GetSample(0, i)) < 1e-6f, "Fidelidade 24-bit mono < 1e-6");
+                }
+            }
+
+            var stereo = new AudioBuffer(2, 48000, 24, 800);
+            for (int i = 0; i < 800; i++)
+            {
+                stereo.SetSample(0, i, 0.5f);
+                stereo.SetSample(1, i, -0.5f);
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(stereo, ms);
+                ms.Position = 0;
+                var decStereo = WavDecoder.Decode(ms);
+                Assert(decStereo.Channels == 2, "Stereo 24-bit");
+                Assert(decStereo.BitsPerSample == 24, "24 bits");
+                Assert(Math.Abs(decStereo.GetSample(0, 100) - 0.5f) < 1e-6f, "Esquerdo 24-bit");
+                Assert(Math.Abs(decStereo.GetSample(1, 100) - (-0.5f)) < 1e-6f, "Direito 24-bit");
+            }
+        }
+
+        private static void Test_Wav_RoundTrip_32Bit_Mono_And_Stereo()
+        {
+            var mono = new AudioBuffer(1, 192000, 32, 1000);
+            for (int i = 0; i < 1000; i++)
+            {
+                mono.SetSample(0, i, (float)Math.Cos(i * 0.02) * 0.95f);
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(mono, ms);
+                ms.Position = 0;
+                var dec = WavDecoder.Decode(ms);
+                Assert(dec.Channels == 1, "Mono 32-bit");
+                Assert(dec.BitsPerSample == 32, "32 bits");
+                Assert(dec.SampleRate == 192000, "192000 Hz");
+                for (int i = 0; i < 1000; i++)
+                {
+                    Assert(Math.Abs(mono.GetSample(0, i) - dec.GetSample(0, i)) < 1e-7f, "Fidelidade 32-bit < 1e-7");
+                }
+            }
+        }
+
+        private static void Test_Wav_RiffPadding_OddSizeChunk()
+        {
+            var buffer = new AudioBuffer(1, 8000, 8, 1001);
+            for (int i = 0; i < 1001; i++) buffer.SetSample(0, i, 0.42f);
+
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(buffer, ms);
+                byte[] bytes = ms.ToArray();
+
+                Assert(bytes.Length == 1046, string.Format("Tamanho com pad deve ser 1046 bytes, obtido {0}", bytes.Length));
+                Assert(bytes[bytes.Length - 1] == 0, "Último byte deve ser o pad byte 0x00");
+
+                var decoded = WavDecoder.Decode(new MemoryStream(bytes));
+                Assert(decoded.FrameCount == 1001, "Todos os 1001 quadros devem ser lidos");
+            }
+        }
+
+        private static void Test_Wav_AuxiliaryChunks_SkipListAndJunk()
+        {
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)0);
+                w.Write(WavHeader.FourCcWave);
+
+                // JUNK (7 bytes de dados + 1 byte pad)
+                w.Write(Encoding.ASCII.GetBytes("JUNK"));
+                w.Write((uint)7);
+                w.Write(Encoding.ASCII.GetBytes("1234567"));
+                w.Write((byte)0);
+
+                // fmt (16 bytes)
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)1);
+                w.Write((uint)44100);
+                w.Write((uint)88200);
+                w.Write((ushort)2);
+                w.Write((ushort)16);
+
+                // LIST (10 bytes de dados)
+                w.Write(Encoding.ASCII.GetBytes("LIST"));
+                w.Write((uint)10);
+                w.Write(Encoding.ASCII.GetBytes("INFO123456"));
+
+                // data (20 bytes = 10 quadros de 16-bit)
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)20);
+                for (int i = 0; i < 10; i++)
+                {
+                    short s = (short)(i * 1000);
+                    w.Write(s);
+                }
+
+                long totalLen = ms.Length;
+                ms.Position = 4;
+                w.Write((uint)(totalLen - 8));
+
+                ms.Position = 0;
+                var header = WavHeader.Read(ms);
+                Assert(header.Channels == 1, "Mono");
+                Assert(header.SampleRate == 44100, "44100");
+                Assert(header.FrameCount == 10, "10 quadros");
+                Assert(header.AuxiliaryChunks.ContainsKey("JUNK"), "Deve registrar chunk JUNK");
+                Assert(header.AuxiliaryChunks.ContainsKey("LIST"), "Deve registrar chunk LIST");
+
+                ms.Position = 0;
+                var buffer = WavDecoder.Decode(ms);
+                Assert(buffer.FrameCount == 10, "Decodificação de áudio após saltar chunks auxiliares");
+                Assert(Math.Abs(buffer.GetSample(0, 5) - (5000.0f / 32767.0f)) < 0.0001f, "Amostra após saltar chunks");
+            }
+        }
+
+        private static void Test_Wav_ExtensiblePcm_Guid()
+        {
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)0);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)40);
+                w.Write(WavHeader.WaveFormatExtensible);
+                w.Write((ushort)2);
+                w.Write((uint)48000);
+                w.Write((uint)192000);
+                w.Write((ushort)4);
+                w.Write((ushort)16);
+                w.Write((ushort)22);
+                w.Write((ushort)16);
+                w.Write((uint)3);
+                w.Write(WavHeader.PcmSubFormatGuid);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)32);
+                for (int i = 0; i < 8; i++)
+                {
+                    w.Write((short)1000);
+                    w.Write((short)-1000);
+                }
+
+                ms.Position = 4;
+                w.Write((uint)(ms.Length - 8));
+
+                ms.Position = 0;
+                var buffer = WavDecoder.Decode(ms);
+                Assert(buffer.Channels == 2, "2 canais");
+                Assert(buffer.SampleRate == 48000, "48000 Hz");
+                Assert(buffer.FrameCount == 8, "8 quadros");
+                Assert(Math.Abs(buffer.GetSample(0, 0) - (1000.0f / 32767.0f)) < 0.0001f, "Canal esquerdo extensible");
+                Assert(Math.Abs(buffer.GetSample(1, 0) - (-1000.0f / 32768.0f)) < 0.0001f, "Canal direito extensible");
+            }
+        }
+
+        private static void Test_Wav_ChannelConversion_MonoToStereo_And_StereoToMono()
+        {
+            var mono = new AudioBuffer(1, 44100, 16, 100);
+            for (int i = 0; i < 100; i++) mono.SetSample(0, i, 0.65f);
+
+            var stereo = mono.ToStereo();
+            Assert(stereo.Channels == 2, "ToStereo deve gerar 2 canais");
+            Assert(stereo.FrameCount == 100, "Mesma contagem de quadros");
+            Assert(stereo.GetSample(0, 50) == 0.65f, "Canal esquerdo duplicado");
+            Assert(stereo.GetSample(1, 50) == 0.65f, "Canal direito duplicado");
+
+            stereo.SetSample(0, 10, 0.8f);
+            stereo.SetSample(1, 10, 0.2f);
+            var backToMono = stereo.ToMono();
+            Assert(backToMono.Channels == 1, "ToMono deve gerar 1 canal");
+            Assert(Math.Abs(backToMono.GetSample(0, 10) - 0.5f) < 0.0001f, "Média dos canais (0.8 + 0.2)/2 = 0.5");
+        }
+
+        private static void Test_Wav_Resampling_LinearInterpolation()
+        {
+            int origRate = 44100;
+            int targetRate = 48000;
+            int origFrames = 44100;
+            var buffer = new AudioBuffer(1, origRate, 16, origFrames);
+            for (int i = 0; i < origFrames; i++)
+            {
+                float t = (float)i / origRate;
+                buffer.SetSample(0, i, (float)Math.Sin(2.0 * Math.PI * 440.0 * t));
+            }
+
+            var resampled = buffer.Resample(targetRate);
+            Assert(resampled.SampleRate == targetRate, "Nova taxa deve ser 48000");
+            Assert(resampled.FrameCount == 48000, "1 segundo em 48000 deve ter 48000 quadros");
+            Assert(Math.Abs(resampled.DurationSeconds - 1.0) < 0.001, "Duração preservada em 1.0 s");
+
+            var downsampled = buffer.Resample(22050);
+            Assert(downsampled.SampleRate == 22050, "Nova taxa deve ser 22050");
+            Assert(downsampled.FrameCount == 22050, "1 segundo em 22050 deve ter 22050 quadros");
+            Assert(Math.Abs(downsampled.DurationSeconds - 1.0) < 0.001, "Duração preservada em 1.0 s");
+        }
+
+        private static void Test_Wav_GainAndNormalization()
+        {
+            var buffer = new AudioBuffer(1, 44100, 16, 100);
+            for (int i = 0; i < 100; i++) buffer.SetSample(0, i, 0.25f);
+
+            buffer.ApplyGain(2.0f);
+            Assert(Math.Abs(buffer.GetSample(0, 50) - 0.5f) < 0.0001f, "Ganho 2.0x deve dobrar amplitude");
+
+            buffer.Normalize(0.99f);
+            Assert(Math.Abs(buffer.GetSample(0, 50) - 0.99f) < 0.0001f, "Normalização deve elevar pico para 0.99");
+        }
+
+        private static void Test_Wav_Security_InvalidSignature_And_Truncation()
+        {
+            bool threwSig = false;
+            try
+            {
+                byte[] badSig = Encoding.ASCII.GetBytes("NOTRxxxxWAVEfmt ");
+                WavDecoder.Decode(new MemoryStream(badSig));
+            }
+            catch (CorruptDataException) { threwSig = true; }
+            Assert(threwSig, "Deve rejeitar assinatura que não seja 'RIFF'");
+
+            bool threwShort = false;
+            try
+            {
+                byte[] shortHeader = new byte[8];
+                WavDecoder.Decode(new MemoryStream(shortHeader));
+            }
+            catch (CorruptDataException) { threwShort = true; }
+            Assert(threwShort, "Deve rejeitar cabeçalho < 12 bytes");
+
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)100);
+                w.Write(WavHeader.FourCcWave);
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)1);
+                w.Write((uint)44100);
+                w.Write((uint)88200);
+                w.Write((ushort)2);
+                w.Write((ushort)16);
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)1000);
+                w.Write((int)12345);
+
+                ms.Position = 0;
+                bool threwTruncData = false;
+                try { WavDecoder.Decode(ms); }
+                catch (CorruptDataException) { threwTruncData = true; }
+                Assert(threwTruncData, "Deve rejeitar fluxo truncado antes do fim declarado do chunk data");
+            }
+        }
+
+        private static void Test_Wav_Security_UnsupportedCompression_And_BitDepths()
+        {
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)100);
+                w.Write(WavHeader.FourCcWave);
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write((ushort)3); // IEEE Float
+                w.Write((ushort)1);
+                w.Write((uint)44100);
+                w.Write((uint)176400);
+                w.Write((ushort)4);
+                w.Write((ushort)32);
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threwFloat = false;
+                try { WavDecoder.Decode(ms); }
+                catch (UnsupportedFormatException) { threwFloat = true; }
+                Assert(threwFloat, "Deve rejeitar IEEE Float com UnsupportedFormatException");
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)100);
+                w.Write(WavHeader.FourCcWave);
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)1);
+                w.Write((uint)44100);
+                w.Write((uint)44100);
+                w.Write((ushort)1);
+                w.Write((ushort)12);
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threw12Bit = false;
+                try { WavDecoder.Decode(ms); }
+                catch (UnsupportedFormatException) { threw12Bit = true; }
+                Assert(threw12Bit, "Deve rejeitar 12 bits com UnsupportedFormatException");
+            }
+        }
+
+        private static void Test_Wav_Security_InvalidBlockAlign_And_Channels()
+        {
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)100);
+                w.Write(WavHeader.FourCcWave);
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)2);
+                w.Write((uint)44100);
+                w.Write((uint)88200);
+                w.Write((ushort)3); // BlockAlign errado (deveria ser 4)
+                w.Write((ushort)16);
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threwAlign = false;
+                try { WavDecoder.Decode(ms); }
+                catch (CorruptDataException) { threwAlign = true; }
+                Assert(threwAlign, "Deve rejeitar BlockAlign inconsistente");
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)100);
+                w.Write(WavHeader.FourCcWave);
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)0); // 0 canais
+                w.Write((uint)44100);
+                w.Write((uint)88200);
+                w.Write((ushort)2);
+                w.Write((ushort)16);
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)0);
+
+                ms.Position = 0;
+                bool threwZeroCh = false;
+                try { WavDecoder.Decode(ms); }
+                catch (CorruptDataException) { threwZeroCh = true; }
+                Assert(threwZeroCh, "Deve rejeitar arquivo com 0 canais");
+            }
+        }
+
+        private static void Test_Wav_Security_ExceedFileAndFrameLimits()
+        {
+            bool threwRate = false;
+            try
+            {
+                SecurityLimits.AssertAudioParameters(1, 384000, 16, 100);
+            }
+            catch (CorruptDataException) { threwRate = true; }
+            Assert(threwRate, "Deve rejeitar sample rate > 192 kHz");
+
+            bool threwFrames = false;
+            try
+            {
+                SecurityLimits.AssertAudioParameters(1, 44100, 16, SecurityLimits.MaxAudioFrames + 1);
+            }
+            catch (ResourceLimitException) { threwFrames = true; }
+            Assert(threwFrames, "Deve rejeitar frame count > 100M quadros com ResourceLimitException");
+        }
+
+        private static void Test_Wav_Engine_Inspect_And_Registry()
+        {
+            var registry = EngineRegistry.Default;
+            var engine = registry.Resolve("wav", "wav");
+            Assert(engine != null, "WavEngine deve estar registrado");
+            Assert(engine.EngineId == "audio-wav", "EngineId deve ser 'audio-wav'");
+
+            var buffer = new AudioBuffer(2, 48000, 24, 24000);
+            using (var ms = new MemoryStream())
+            {
+                WavEncoder.Encode(buffer, ms);
+                ms.Position = 0;
+                var info = engine.Inspect(ms, "test.wav");
+                Assert(info.FormatId == "wav", "FormatId deve ser 'wav'");
+                Assert(info.MimeType == "audio/wav", "MimeType");
+                Assert(info.Metadata["SampleRate"] == "48000 Hz", "SampleRate");
+                Assert(info.Metadata["BitsPerSample"] == "24 bits", "BitsPerSample");
+                Assert(info.Metadata["Channels"] == "2 (Estéreo)", "Channels");
+                Assert(info.Metadata["DurationSeconds"] == "0.50 s", "Duration");
+            }
+        }
+
+        private static void Test_Wav_Engine_ConvertPipeline_WithSettings()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_wav_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string inputPath = Path.Combine(tempDir, "source.wav");
+                var srcBuffer = new AudioBuffer(2, 44100, 16, 22050);
+                for (int i = 0; i < 22050; i++)
+                {
+                    srcBuffer.SetSample(0, i, 0.3f);
+                    srcBuffer.SetSample(1, i, 0.5f);
+                }
+                using (var fs = File.Create(inputPath))
+                {
+                    WavEncoder.Encode(srcBuffer, fs);
+                }
+
+                var engine = new WavEngine();
+                var req = new ConvertRequest
+                {
+                    InputPath = inputPath,
+                    TargetFormat = "wav",
+                    OutputDirectory = tempDir,
+                    OutputFileName = "converted.wav"
+                };
+                req.Settings["sampleRate"] = "48000";
+                req.Settings["channels"] = "1";
+                req.Settings["bits"] = "24";
+                req.Settings["normalize"] = "true";
+
+                int maxProgress = 0;
+                var res = engine.Convert(req, pct => { if (pct > maxProgress) maxProgress = pct; });
+
+                Assert(res.Status == "completed", "Status deve ser completed");
+                Assert(maxProgress == 100, "Progresso deve atingir 100%");
+                Assert(File.Exists(res.OutputPath), "Arquivo convertido deve existir");
+
+                using (var fs = File.OpenRead(res.OutputPath))
+                {
+                    var inspected = engine.Inspect(fs, res.OutputPath);
+                    Assert(inspected.Metadata["SampleRate"] == "48000 Hz", "Convertido para 48000 Hz");
+                    Assert(inspected.Metadata["Channels"] == "1 (Mono)", "Convertido para Mono");
+                    Assert(inspected.Metadata["BitsPerSample"] == "24 bits", "Convertido para 24 bits");
+
+                    fs.Position = 0;
+                    var convertedBuffer = WavDecoder.Decode(fs);
+                    Assert(convertedBuffer.Channels == 1, "Buffer com 1 canal");
+                    Assert(convertedBuffer.BitsPerSample == 24, "Buffer com 24 bits");
+                    Assert(Math.Abs(convertedBuffer.GetSample(0, 100) - 0.99f) < 0.01f, "Pico normalizado para 0.99");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Wav_External_Interoperability_SystemSoundPlayer()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_sp_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string wavPath = Path.Combine(tempDir, "sine16.wav");
+                int sampleRate = 44100;
+                int frameCount = 4410;
+                var buffer = new AudioBuffer(2, sampleRate, 16, frameCount);
+                for (int i = 0; i < frameCount; i++)
+                {
+                    float t = (float)i / sampleRate;
+                    buffer.SetSample(0, i, (float)Math.Sin(2.0 * Math.PI * 440.0 * t) * 0.5f);
+                    buffer.SetSample(1, i, (float)Math.Sin(2.0 * Math.PI * 880.0 * t) * 0.5f);
+                }
+
+                using (var fs = File.Create(wavPath))
+                {
+                    WavEncoder.Encode(buffer, fs);
+                }
+
+                var player = new System.Media.SoundPlayer(wavPath);
+                player.Load();
+                Assert(player.IsLoadCompleted, "SoundPlayer do Windows deve carregar o WAV do Lodino sem erros");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        #endregion
 
         #endregion
 

@@ -85,5 +85,47 @@ namespace Lodino.Core.Safety
                     currentDepth, MaxJsonNestingDepth));
             }
         }
+
+        public const long DefaultMaxAudioFileSize = 500 * 1024 * 1024; // 500 MB
+        public const int MaxAudioChannels = 8;
+        public const int MinAudioSampleRate = 8000;
+        public const int MaxAudioSampleRate = 192000;
+        public const long MaxAudioFrames = 100 * 1000 * 1000; // 100 milhões de frames (~35 min a 48 kHz stereo)
+
+        public static void AssertAudioParameters(int channels, int sampleRate, int bitsPerSample, long frameCount)
+        {
+            if (channels <= 0 || channels > MaxAudioChannels)
+            {
+                throw new CorruptDataException(string.Format(
+                    "Número de canais de áudio inválido: {0} (suportado: 1 a {1}).",
+                    channels, MaxAudioChannels));
+            }
+
+            if (sampleRate < MinAudioSampleRate || sampleRate > MaxAudioSampleRate)
+            {
+                throw new CorruptDataException(string.Format(
+                    "Taxa de amostragem de áudio inválida: {0} Hz (faixa permitida: {1} Hz a {2} Hz).",
+                    sampleRate, MinAudioSampleRate, MaxAudioSampleRate));
+            }
+
+            if (bitsPerSample != 8 && bitsPerSample != 16 && bitsPerSample != 24 && bitsPerSample != 32)
+            {
+                throw new UnsupportedFormatException(string.Format(
+                    "Profundidade de bits de áudio {0} não é suportada (suportado: 8, 16, 24 ou 32 bits PCM).",
+                    bitsPerSample));
+            }
+
+            if (frameCount < 0)
+            {
+                throw new CorruptDataException("Contagem de quadros de áudio não pode ser negativa.");
+            }
+
+            if (frameCount > MaxAudioFrames)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Contagem total de quadros de áudio ({0:N0}) excede o limite máximo permitido de {1:N0} quadros.",
+                    frameCount, MaxAudioFrames));
+            }
+        }
     }
 }

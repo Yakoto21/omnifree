@@ -453,6 +453,8 @@ namespace Lodino.Desktop
                 case "csv": return "json";
                 case "json": return "csv";
                 case "ini": return "json";
+                case "wav":
+                case "wave": return "wav";
                 default: return "png";
             }
         }

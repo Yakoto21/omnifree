@@ -297,6 +297,7 @@ namespace Lodino.Desktop
             NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "JSON (Dados Estruturados)");
             NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "CSV (Planilha / Tabela)");
             NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "INI (Configuração)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "WAV (Áudio PCM Sem Perdas)");
             NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_SETCURSEL, (IntPtr)0, IntPtr.Zero);
 
             _hLblOutDir = CreateControl("STATIC", "Pasta de Destino:",
@@ -512,7 +513,7 @@ namespace Lodino.Desktop
             var ofn = new NativeMethods.OPENFILENAME();
             ofn.lStructSize = Marshal.SizeOf(typeof(NativeMethods.OPENFILENAME));
             ofn.hwndOwner = _hWnd;
-            ofn.lpstrFilter = "Todos os Formatos Suportados (*.png;*.jpg;*.jpeg;*.bmp;*.csv;*.json;*.ini)\0*.png;*.jpg;*.jpeg;*.bmp;*.csv;*.json;*.ini\0Imagens (*.png;*.jpg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Dados (*.csv;*.json;*.ini)\0*.csv;*.json;*.ini\0Todos os Arquivos (*.*)\0*.*\0\0";
+            ofn.lpstrFilter = "Todos os Formatos Suportados (*.png;*.jpg;*.jpeg;*.bmp;*.csv;*.json;*.ini;*.wav)\0*.png;*.jpg;*.jpeg;*.bmp;*.csv;*.json;*.ini;*.wav;*.wave\0Imagens (*.png;*.jpg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Dados (*.csv;*.json;*.ini)\0*.csv;*.json;*.ini\0Áudio (*.wav)\0*.wav;*.wave\0Todos os Arquivos (*.*)\0*.*\0\0";
             ofn.nFilterIndex = 1;
 
             int bufferSize = 65536;
@@ -716,6 +717,7 @@ namespace Lodino.Desktop
                 case 3: return "json";
                 case 4: return "csv";
                 case 5: return "ini";
+                case 6: return "wav";
                 default: return "png";
             }
         }
