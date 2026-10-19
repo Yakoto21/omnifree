@@ -294,9 +294,23 @@ namespace Lodino.Desktop
 
                 // Determina pasta de destino
                 string targetDir = outputDirectory;
-                if (string.IsNullOrEmpty(targetDir) || !Directory.Exists(targetDir))
+                if (string.IsNullOrEmpty(targetDir))
                 {
                     targetDir = Path.GetDirectoryName(job.SourcePath);
+                }
+                else
+                {
+                    try
+                    {
+                        if (!Directory.Exists(targetDir))
+                        {
+                            Directory.CreateDirectory(targetDir);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new IOException(string.Format("Não foi possível acessar ou criar o diretório de destino '{0}': {1}", targetDir, ex.Message), ex);
+                    }
                 }
 
                 // Resolve o motor no Core Registry

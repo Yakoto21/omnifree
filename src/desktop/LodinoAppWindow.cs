@@ -123,6 +123,7 @@ namespace Lodino.Desktop
 
             _manager.BindWindow(_hWnd);
             _manager.LogMessage += OnManagerLog;
+            RefreshQueueList();
 
             NativeMethods.ShowWindow(_hWnd, NativeMethods.SW_SHOW);
             NativeMethods.UpdateWindow(_hWnd);
@@ -196,7 +197,7 @@ namespace Lodino.Desktop
                     return IntPtr.Zero;
 
                 case NativeMethods.WM_APP_JOB_PROGRESS:
-                    int pct = wParam.ToInt32();
+                    int pct = lParam.ToInt32();
                     NativeMethods.SendMessage(_hPrgBar, NativeMethods.PBM_SETPOS, (IntPtr)pct, IntPtr.Zero);
                     return IntPtr.Zero;
 
@@ -213,6 +214,14 @@ namespace Lodino.Desktop
                 case NativeMethods.WM_CTLCOLORBTN:
                 case NativeMethods.WM_CTLCOLORLISTBOX:
                     return OnCtlColor(msg, wParam);
+
+                case NativeMethods.WM_CLOSE:
+                    if (_manager != null && _manager.IsRunning)
+                    {
+                        _manager.Cancel();
+                    }
+                    NativeMethods.DestroyWindow(hWnd);
+                    return IntPtr.Zero;
 
                 case NativeMethods.WM_DESTROY:
                     OnDestroy();
@@ -727,6 +736,12 @@ namespace Lodino.Desktop
 
         private void OnDestroy()
         {
+            if (_manager != null)
+            {
+                _manager.BindWindow(IntPtr.Zero);
+                _manager.LogMessage -= OnManagerLog;
+            }
+
             if (_hFontNormal != IntPtr.Zero) NativeMethods.DeleteObject(_hFontNormal);
             if (_hFontBold != IntPtr.Zero) NativeMethods.DeleteObject(_hFontBold);
             if (_hFontTitle != IntPtr.Zero) NativeMethods.DeleteObject(_hFontTitle);
