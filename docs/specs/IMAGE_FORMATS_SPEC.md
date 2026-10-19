@@ -226,3 +226,111 @@ O motor `image-png` integra-se ao `EngineRegistry`, habilitando:
 2. `bmp -> png`: Conversão nativa de bitmaps Windows (24-bit e 32-bit BGRX) para PNG Truecolor com suporte a marcas d'água.
 3. `png -> bmp`: Conversão de PNG Truecolor (RGB e RGBA) para BMP não comprimido de 24 bits ou 32 bits com fidelidade visual completa.
 
+
+
+---
+
+## 7. ESPECIFICAÇÃO TÉCNICA DO MOTOR DE IMAGENS JPEG
+
+**Módulo:** `src/core/formats/image/jpeg/`  
+**Status:** Implementado, Auditado e Testado  
+**Identificador do Motor:** `image-jpeg`
+
+### 7.1 Visão Geral e Normas Adotadas
+
+O motor de imagem JPEG do Lodino foi projetado e desenvolvido inteiramente em código original C#, com independência absoluta de bibliotecas de terceiros (sem `libjpeg`, `stb_image`, `System.Drawing`, `WPF` ou executáveis externos).
+Ele implementa o perfil **Baseline Sequential DCT** de 8 bits por amostra, em conformidade com:
+1. **ISO/IEC 10918-1 / ITU-T T.81:** Compressão digital e codificação de imagens estáticas de tom contínuo.
+2. **JFIF 1.01 (JPEG File Interchange Format):** Formatação de encapsulamento com segmento APP0 e densidade de amostragem.
+
+### 7.2 Marcadores JPEG Suportados e Estrutura de Fluxo
+
+O motor reconhece e processa os seguintes marcadores binários:
+
+| Marcador | Código | Descrição | Tratamento no Lodino |
+|---|---|---|---|
+| `SOI` | `0xFFD8` | Start of Image | Validação obrigatória da assinatura nos 2 primeiros bytes |
+| `EOI` | `0xFFD9` | End of Image | Marcação de encerramento da imagem e validação de término |
+| `SOF0` | `0xFFC0` | Baseline Sequential DCT | Leitura de dimensões, componentes, precisão de 8 bits e fatores de amostragem |
+| `DQT` | `0xFFDB` | Define Quantization Table(s) | Carregamento de tabelas de 8 bits (IDs 0..3) e desquantização Zigzag |
+| `DHT` | `0xFFC4` | Define Huffman Table(s) | Carregamento de tabelas canônicas DC e AC (IDs 0..3) |
+| `DRI` | `0xFFDD` | Define Restart Interval | Leitura de intervalo de reinício $Ri$ em unidades MCU |
+| `RST0`..`RST7` | `0xFFD0`..`0xFFD7` | Restart Markers | Reinício síncrono dos preditores DC e alinhamento de bytes |
+| `APP0` | `0xFFE0` | JFIF Application Segment | Escrita na codificação e salto seguro na decodificação |
+| `APP1`..`APP15` | `0xFFE1`..`0xFFEF` | Marcadores de Aplicação (EXIF, ICC, etc.) | Salto seguro lendo o campo de comprimento de 16 bits |
+| `COM` | `0xFFFE` | Comentário | Salto seguro lendo o campo de comprimento de 16 bits |
+| `SOS` | `0xFFDA` | Start of Scan | Mapeamento de componentes para tabelas Huffman e início do fluxo de entropia |
+
+### 7.3 Espaço de Cor e Fatores de Subamostragem
+
+1. **Conversão de Espaço de Cores (ITU-R BT.601 / JFIF):**
+   - **RGB para YCbCr (Codificação):**
+     $$Y = 0.299000 R + 0.587000 G + 0.114000 B$$
+     $$Cb = -0.168736 R - 0.331264 G + 0.500000 B + 128$$
+     $$Cr = 0.500000 R - 0.418688 G - 0.081312 B + 128$$
+   - **YCbCr para RGB (Decodificação):**
+     $$R = \text{Clamp}(Y + 1.402000 (Cr - 128))$$
+     $$G = \text{Clamp}(Y - 0.344136 (Cb - 128) - 0.714136 (Cr - 128))$$
+     $$B = \text{Clamp}(Y + 1.772000 (Cb - 128))$$
+2. **Esquemas de Subamostragem Suportados:**
+   - **4:4:4:** Amostragem integral ($H=1, V=1$ para Y, Cb e Cr; MCUs de 8x8 pixels). Máxima fidelidade cromática.
+   - **4:2:0:** Subamostragem $2 \times 2$ nos planos de crominância ($H=2, V=2$ para Y, $H=1, V=1$ para Cb/Cr; MCUs de 16x16 pixels). Padrão fotográfico com alta eficiência de compressão.
+   - **4:2:2:** Subamostragem horizontal $2 \times 1$ ($H=2, V=1$ para Y; MCUs de 16x8 pixels).
+   - **Grayscale (Monocromático):** 1 componente Y ($H=1, V=1$; MCUs de 8x8 pixels). R, G e B mapeados diretamente para a luminância com $A=255$.
+
+### 7.4 Transformada Discreta de Cosseno 2D (FDCT e IDCT)
+
+A transformação 2D sobre blocos de 8x8 amostras utiliza decomposição matricial ortogonal separável:
+
+$$F = M \cdot (A - 128) \cdot M^T \quad \text{(FDCT Direct)}$$
+$$A = \text{Clamp}(M^T \cdot F \cdot M + 128) \quad \text{(IDCT Inverse)}$$
+
+Onde a matriz de cossenos ortogonais $M[u, x]$ é pré-calculada com precisão de ponto flutuante:
+$$M[u, x] = \frac{1}{2} C(u) \cos\left[\frac{(2x + 1) u \pi}{16}\right], \quad C(u) = \begin{cases} \frac{1}{\sqrt{2}} & \text{se } u = 0 \\ 1 & \text{se } u > 0 \end{cases}$$
+
+Essa formulação garante reversibilidade exata com erro numérico inferior a $10^{-4}$ unidades float e elimina transposição acidental de eixos.
+
+### 7.5 Quantização e Escalonamento de Qualidade (IJG Standard)
+
+1. **Tabelas do Anexo K:** Utilização das tabelas de referência K.1 (Luminância) e K.2 (Crominância).
+2. **Escala de Fator de Qualidade ($Q \in [1, 100]$):**
+   - Se $Q < 50$: $\text{scale} = \lfloor 5000 / Q \rfloor$
+   - Se $Q \ge 50$: $\text{scale} = 200 - 2 \times Q$
+   - Elemento escalado: $\text{scaledVal} = \text{Clamp}\left(\left\lfloor \frac{\text{baseVal} \times \text{scale} + 50}{100} \right\rfloor, 1, 255\right)$
+3. **Mapeamento Zigzag:** 64 coeficientes organizados diagonalmente por ordem crescente de frequência espacial. A ordenação Zigzag e seu inverso natural são demonstradamente bijetivos para todos os índices de 0 a 63.
+
+### 7.6 Codificação por Entropia (Huffman) e Byte-Stuffing
+
+1. **Manipulação de Bits:**
+   - Leitor e escritor de fluxo de bits com orientação MSB-first.
+   - **Byte-Stuffing:** Em qualquer emissão do byte `0xFF` no fluxo de entropia codificado, o byte nulo `0x00` é automaticamente inserido. Na decodificação, `0xFF 0x00` é reconvertido de forma transparente para `0xFF`.
+   - **Encerramento da Varredura:** O escritor alinha o último byte à fronteira com bits `1` conforme ISO/IEC 10918-1 §B.1.1.5.
+2. **Procedimento de Decodificação (ITU-T T.81 Anexo F):**
+   - Decodificação canônica estruturada em tabelas `mincode`, `maxcode` e `valptr` para códigos de até 16 bits.
+   - Decodificação diferencial DC com restauração por magnitude signed (`EXTEND`).
+   - Decodificação AC com suporte a EOB (`0x00`) e salto de 16 zeros ZRL (`0xF0`).
+
+### 7.7 Política de Rejeição e Segurança do Motor JPEG
+
+| Cenário / Variante | Indicador / Causa | Exceção Lançada |
+|---|---|---|
+| Assinatura JPEG Ausente | Primeiros 2 bytes $\ne$ `0xFF 0xD8` (SOI) | `CorruptDataException` |
+| Perfil Progressivo | `SOF2` (`0xFFC2`) ou `SOF6` (`0xFFC6`) | `UnsupportedFormatException` |
+| Perfil Aritmético | `SOF9`, `SOF10`, `SOF11` | `UnsupportedFormatException` |
+| Perfil Sem Perdas (Lossless) | `SOF3`, `SOF7` | `UnsupportedFormatException` |
+| Precisão Diferente de 8 bits | $P \ne 8$ no cabeçalho SOF0 (ex: 12-bit, 16-bit) | `UnsupportedFormatException` |
+| Formato 4 Componentes (CMYK/YCCK) | $N_f = 4$ em SOF0 | `UnsupportedFormatException` |
+| Dimensões Inválidas | Largura $\le 0$ ou Altura $\le 0$ | `CorruptDataException` |
+| Dimensão Excessiva | Largura ou Altura $> 16.384$ px | `ResourceLimitException` |
+| Arquivo Truncado | Fim prematuro do stream antes de EOI ou dados de scan | `CorruptDataException` |
+| Símbolo Huffman Inválido | Sequência de bits não contida na árvore canônica | `CorruptDataException` |
+| Tabela de Quantização Inexistente | Componente referencia tabela Q não definida | `CorruptDataException` |
+
+### 7.8 Rotas de Conversão e Interoperabilidade
+
+O motor `image-jpeg` registra-se no `EngineRegistry` e atende:
+1. `jpeg/jpg -> jpeg/jpg`: Recodificação, qualidade configurável, recorte em 9 posições, redimensionamento nearest/bilinear e marcas d'água de texto/imagem.
+2. `jpeg/jpg -> bmp`: Decodificação nativa para BMP 24-bit ou 32-bit BGRX.
+3. `bmp -> jpeg/jpg`: Codificação de bitmaps Windows para JPEG com qualidade e subamostragem selecionáveis.
+4. `jpeg/jpg -> png`: Conversão para PNG Truecolor de 24 bits.
+5. `png -> jpeg/jpg`: Conversão de PNG Truecolor (com mescla sobreposta de transparência) para JPEG.

@@ -5,6 +5,7 @@ using Lodino.Core.Api;
 using Lodino.Core.Errors;
 using Lodino.Core.Formats.Data;
 using Lodino.Core.Formats.Image;
+using Lodino.Core.Formats.Image.Jpeg;
 using Lodino.Core.Formats.Image.Png;
 using Lodino.Core.IO;
 using Lodino.Core.Registry;
@@ -162,6 +163,30 @@ namespace Lodino.Tests
             RunTest("HARDENING: Rejeição de bytes espúrios após Adler-32 em fluxo ZLIB", Test_Hardening_Zlib_Trailing_Garbage);
             RunTest("HARDENING: Tolerância a bytes residuais (padding) no último IDAT (ISO/IEC 15948 §10.2)", Test_Hardening_Png_Idat_TrailingPadding_Allowed);
             RunTest("HARDENING: Rejeição de streams não-seekable no BMP que excedam o limite de entrada", Test_Hardening_Bmp_NonSeekable_Stream_LimitExceeded);
+
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE CORE — MOTOR PILOTO 3            ");
+            Console.WriteLine("  Módulo: Motor Nativo de Imagens JPEG Próprio   ");
+            Console.WriteLine("=================================================\n");
+
+            RunTest("JPEG (Matemática): Precisão rigorosa de FDCT e IDCT 2D (< 10^-4)", Test_Jpeg_FastDct_Accuracy);
+            RunTest("JPEG (Quantização): Invertibilidade Zigzag e escalonamento IJG", Test_Jpeg_QuantizationTable_QualityScaling);
+            RunTest("JPEG (Huffman): Tabelas padrão Anexo K e codificação/decodificação canônica", Test_Jpeg_HuffmanTable_Canonical_Roundtrip);
+            RunTest("JPEG (Bits): Byte-stuffing automático (0xFF 0x00) e desempacotamento MSB", Test_Jpeg_BitWriter_BitReader_ByteStuffing);
+            RunTest("JPEG (Cor): Conversão BT.601 RGB <-> YCbCr e fidelidade cromática", Test_Jpeg_ColorConverter_RgbYCbCr);
+            RunTest("JPEG (Baseline 4:4:4): Codificação e decodificação com alta fidelidade (PSNR > 35 dB)", Test_Jpeg_EncodeDecode_Baseline444_Roundtrip);
+            RunTest("JPEG (Baseline 4:2:0): Subamostragem cromática fotográfica (PSNR > 30 dB)", Test_Jpeg_EncodeDecode_Baseline420_Roundtrip);
+            RunTest("JPEG (Grayscale): Decodificação de imagem monocromática de 1 componente", Test_Jpeg_Decode_Grayscale);
+            RunTest("JPEG (Marcadores): Reinício de predição DC via Restart Interval (DRI / RSTm)", Test_Jpeg_RestartInterval_DRI_RSTm);
+            RunTest("JPEG (Segurança): Rejeição de assinatura inválida (sem SOI)", Test_Jpeg_Security_InvalidSignature_Rejection);
+            RunTest("JPEG (Segurança): Rejeição de perfil progressivo não suportado (SOF2)", Test_Jpeg_Security_UnsupportedProfile_SOF2_Rejection);
+            RunTest("JPEG (Segurança): Rejeição de precisão de amostra diferente de 8 bits", Test_Jpeg_Security_UnsupportedPrecision_Rejection);
+            RunTest("JPEG (Segurança): Rejeição de formatos com 4 componentes (CMYK/YCCK)", Test_Jpeg_Security_UnsupportedComponents_CMYK_Rejection);
+            RunTest("JPEG (Segurança): Rejeição de dimensões inválidas ou excessivas", Test_Jpeg_Security_Dimensions_Limits);
+            RunTest("JPEG (Segurança): Rejeição de fluxo truncado ou prematuro", Test_Jpeg_Security_TruncatedStream_Rejection);
+            RunTest("JPEG (Engine): Inspeção completa de metadados via JpegEngine.Inspect", Test_Jpeg_Engine_Inspect);
+            RunTest("JPEG (Engine): Pipeline completo de transformações (crop, resize, watermark)", Test_Jpeg_Engine_Convert_Transforms);
+            RunTest("JPEG (Rotas Bidirecionais): Matriz completa JPEG <-> BMP, JPEG <-> PNG e JPEG <-> JPEG", Test_Jpeg_Bidirectional_Routes);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -2557,6 +2582,806 @@ namespace Lodino.Tests
             }
         }
 
+        #region Casos de Teste JPEG
+
+        private static double CalculateMAE(PixelBuffer img1, PixelBuffer img2)
+        {
+            long totalDiff = 0;
+            int count = img1.Width * img1.Height * 3;
+            for (int y = 0; y < img1.Height; y++)
+            {
+                for (int x = 0; x < img1.Width; x++)
+                {
+                    var p1 = img1.GetPixel(x, y);
+                    var p2 = img2.GetPixel(x, y);
+                    totalDiff += Math.Abs(p1.R - p2.R);
+                    totalDiff += Math.Abs(p1.G - p2.G);
+                    totalDiff += Math.Abs(p1.B - p2.B);
+                }
+            }
+            return (double)totalDiff / count;
+        }
+
+        private static double CalculatePSNR(PixelBuffer img1, PixelBuffer img2)
+        {
+            double mse = 0;
+            int count = img1.Width * img1.Height * 3;
+            for (int y = 0; y < img1.Height; y++)
+            {
+                for (int x = 0; x < img1.Width; x++)
+                {
+                    var p1 = img1.GetPixel(x, y);
+                    var p2 = img2.GetPixel(x, y);
+                    int dr = p1.R - p2.R;
+                    int dg = p1.G - p2.G;
+                    int db = p1.B - p2.B;
+                    mse += (dr * dr + dg * dg + db * db);
+                }
+            }
+            mse /= count;
+            if (mse < 1e-10) return 99.0;
+            return 10.0 * Math.Log10((255.0 * 255.0) / mse);
+        }
+
+        private static void Test_Jpeg_FastDct_Accuracy()
+        {
+            float[][] patterns = new float[][]
+            {
+                new float[64],
+                new float[64],
+                new float[64],
+                new float[64],
+                new float[64]
+            };
+
+            for (int i = 0; i < 64; i++)
+            {
+                patterns[1][i] = 128.0f;
+                int x = i % 8;
+                int y = i / 8;
+                patterns[2][i] = (x * 15 + y * 12) % 256;
+                patterns[3][i] = ((x + y) % 2 == 0) ? 40.0f : 210.0f;
+            }
+            patterns[4][27] = 255.0f;
+
+            float[] dctOut = new float[64];
+            float[] reconstructed = new float[64];
+
+            foreach (var original in patterns)
+            {
+                FastDct.Transform(original, dctOut);
+                FastDct.InverseTransformFloat(dctOut, reconstructed);
+
+                for (int i = 0; i < 64; i++)
+                {
+                    float diff = Math.Abs(original[i] - reconstructed[i]);
+                    Assert(diff < 1e-4f, string.Format("Erro numérico de FDCT/IDCT excessivo: {0} na posição {1}", diff, i));
+                }
+            }
+        }
+
+        private static void Test_Jpeg_QuantizationTable_QualityScaling()
+        {
+            for (int z = 0; z < 64; z++)
+            {
+                int natural = JpegQuantizationTable.ZigzagToNatural[z];
+                int zBack = JpegQuantizationTable.NaturalToZigzag[natural];
+                AssertEqual(z, zBack, "Invertibilidade Zigzag -> Natural -> Zigzag");
+            }
+
+            var q50 = JpegQuantizationTable.Scale(JpegQuantizationTable.StandardLuminance, 50);
+            for (int i = 0; i < 64; i++)
+            {
+                AssertEqual(JpegQuantizationTable.StandardLuminance[i], q50.Elements[i], "Elemento Q50");
+            }
+
+            var q100 = JpegQuantizationTable.Scale(JpegQuantizationTable.StandardLuminance, 100);
+            for (int i = 0; i < 64; i++)
+            {
+                AssertEqual(1, q100.Elements[i], "Elemento Q100 deve ser 1");
+            }
+
+            var q1 = JpegQuantizationTable.Scale(JpegQuantizationTable.StandardLuminance, 1);
+            for (int i = 0; i < 64; i++)
+            {
+                Assert(q1.Elements[i] >= q50.Elements[i], "Elemento Q1 deve ser >= Q50");
+                Assert(q1.Elements[i] <= 255, "Elemento Q1 deve ser <= 255");
+            }
+
+            byte[] zigzagBytes = q50.ToZigzagBytes();
+            AssertEqual(64, zigzagBytes.Length, "Comprimento dos bytes Zigzag");
+            var restored = JpegQuantizationTable.FromZigzag(zigzagBytes);
+            for (int i = 0; i < 64; i++)
+            {
+                AssertEqual(q50.Elements[i], restored.Elements[i], "Elemento restaurado a partir de Zigzag");
+            }
+        }
+
+        private static void Test_Jpeg_HuffmanTable_Canonical_Roundtrip()
+        {
+            var lumDc = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+            AssertEqual(12, lumDc.Values.Length, "Número de símbolos Lum DC");
+
+            byte[] testSymbols = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, 5, 2 };
+
+            using (var ms = new MemoryStream())
+            {
+                var writer = new JpegBitWriter(ms);
+                foreach (byte sym in testSymbols)
+                {
+                    writer.WriteSymbol(sym, lumDc);
+                }
+                writer.Flush();
+
+                ms.Position = 0;
+                var reader = new JpegBitReader(ms);
+                foreach (byte expected in testSymbols)
+                {
+                    int decoded = lumDc.Decode(reader);
+                    AssertEqual((int)expected, decoded, "Decodificação de símbolo Huffman Lum DC");
+                }
+            }
+        }
+
+        private static void Test_Jpeg_BitWriter_BitReader_ByteStuffing()
+        {
+            using (var ms = new MemoryStream())
+            {
+                var writer = new JpegBitWriter(ms);
+                writer.WriteBits(0xAA, 8);
+                writer.WriteBits(0xFF, 8);
+                writer.WriteBits(0x55, 8);
+                writer.WriteBits(0xFF, 8);
+                writer.WriteBits(0x1234, 16);
+                writer.Flush();
+
+                byte[] raw = ms.ToArray();
+                bool foundStuffing = false;
+                for (int i = 0; i < raw.Length - 1; i++)
+                {
+                    if (raw[i] == 0xFF && raw[i + 1] == 0x00)
+                    {
+                        foundStuffing = true;
+                        break;
+                    }
+                }
+                Assert(foundStuffing, "Fluxo físico deve conter 0xFF 0x00 resultante de byte stuffing");
+
+                ms.Position = 0;
+                var reader = new JpegBitReader(ms);
+                AssertEqual(0xAA, reader.ReadBits(8), "Leitura 0xAA");
+                AssertEqual(0xFF, reader.ReadBits(8), "Leitura 0xFF sem byte de stuffing");
+                AssertEqual(0x55, reader.ReadBits(8), "Leitura 0x55");
+                AssertEqual(0xFF, reader.ReadBits(8), "Segunda leitura 0xFF");
+                AssertEqual(0x1234, reader.ReadBits(16), "Leitura 0x1234");
+            }
+        }
+
+        private static void Test_Jpeg_ColorConverter_RgbYCbCr()
+        {
+            byte[][] testColors = new byte[][]
+            {
+                new byte[] { 255, 0, 0 },
+                new byte[] { 0, 255, 0 },
+                new byte[] { 0, 0, 255 },
+                new byte[] { 255, 255, 255 },
+                new byte[] { 0, 0, 0 },
+                new byte[] { 128, 128, 128 },
+                new byte[] { 255, 255, 0 },
+                new byte[] { 0, 255, 255 },
+                new byte[] { 255, 0, 255 }
+            };
+
+            foreach (var rgb in testColors)
+            {
+                byte y, cb, cr;
+                JpegColorConverter.RgbToYCbCr(rgb[0], rgb[1], rgb[2], out y, out cb, out cr);
+
+                byte rOut, gOut, bOut;
+                JpegColorConverter.YCbCrToRgb(y, cb, cr, out rOut, out gOut, out bOut);
+
+                int diffR = Math.Abs(rgb[0] - rOut);
+                int diffG = Math.Abs(rgb[1] - gOut);
+                int diffB = Math.Abs(rgb[2] - bOut);
+
+                Assert(diffR <= 1 && diffG <= 1 && diffB <= 1,
+                    string.Format("Diferença na conversão de cor ({0},{1},{2}) -> ({3},{4},{5}) excedeu 1 unidade",
+                        rgb[0], rgb[1], rgb[2], rOut, gOut, bOut));
+            }
+        }
+
+        private static void Test_Jpeg_EncodeDecode_Baseline444_Roundtrip()
+        {
+            int w = 16;
+            int h = 16;
+            var original = new PixelBuffer(w, h);
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    byte r = (byte)(x * 16);
+                    byte g = (byte)(y * 16);
+                    byte b = (byte)((x + y) * 8);
+                    original.SetPixel(x, y, new PixelColor(r, g, b, 255));
+                }
+            }
+
+            byte[] jpegBytes;
+            using (var ms = new MemoryStream())
+            {
+                JpegEncoder.Encode(original, ms, quality: 95, useSubsampling420: false);
+                jpegBytes = ms.ToArray();
+            }
+
+            Assert(jpegBytes.Length > 0, "Bytes JPEG codificados");
+
+            PixelBuffer decoded;
+            using (var ms = new MemoryStream(jpegBytes))
+            {
+                decoded = JpegDecoder.Decode(ms);
+            }
+
+            AssertEqual(w, decoded.Width, "Width decodificado");
+            AssertEqual(h, decoded.Height, "Height decodificado");
+
+            double mae = CalculateMAE(original, decoded);
+            double psnr = CalculatePSNR(original, decoded);
+
+            Assert(mae < 3.0, string.Format("MAE em Baseline 4:4:4 deve ser < 3.0 (obtido: {0:F2})", mae));
+            Assert(psnr > 38.0, string.Format("PSNR em Baseline 4:4:4 deve ser > 38 dB (obtido: {0:F2} dB)", psnr));
+        }
+
+        private static void Test_Jpeg_EncodeDecode_Baseline420_Roundtrip()
+        {
+            int w = 32;
+            int h = 32;
+            var original = new PixelBuffer(w, h);
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    byte r = (byte)((x * 8) % 256);
+                    byte g = (byte)((y * 8) % 256);
+                    byte b = (byte)(128 + ((x - y) * 3));
+                    original.SetPixel(x, y, new PixelColor(r, g, b, 255));
+                }
+            }
+
+            byte[] jpegBytes;
+            using (var ms = new MemoryStream())
+            {
+                JpegEncoder.Encode(original, ms, quality: 85, useSubsampling420: true);
+                jpegBytes = ms.ToArray();
+            }
+
+            Assert(jpegBytes.Length > 0, "Bytes JPEG 4:2:0 gerados");
+
+            PixelBuffer decoded;
+            using (var ms = new MemoryStream(jpegBytes))
+            {
+                decoded = JpegDecoder.Decode(ms);
+            }
+
+            AssertEqual(w, decoded.Width, "Width 4:2:0");
+            AssertEqual(h, decoded.Height, "Height 4:2:0");
+
+            double mae = CalculateMAE(original, decoded);
+            double psnr = CalculatePSNR(original, decoded);
+
+            Assert(mae < 5.0, string.Format("MAE em Baseline 4:2:0 deve ser < 5.0 (obtido: {0:F2})", mae));
+            Assert(psnr > 32.0, string.Format("PSNR em Baseline 4:2:0 deve ser > 32 dB (obtido: {0:F2} dB)", psnr));
+        }
+
+        private static void Test_Jpeg_Decode_Grayscale()
+        {
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+
+                var qLum = new JpegQuantizationTable(JpegQuantizationTable.StandardLuminance);
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(0x43);
+                ms.WriteByte(0x00);
+                ms.Write(qLum.ToZigzagBytes(), 0, 64);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(0x0B);
+                ms.WriteByte(0x08);
+                ms.WriteByte(0x00); ms.WriteByte(0x08);
+                ms.WriteByte(0x00); ms.WriteByte(0x08);
+                ms.WriteByte(0x01);
+                ms.WriteByte(0x01);
+                ms.WriteByte(0x11);
+                ms.WriteByte(0x00);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(0x08);
+                ms.WriteByte(0x01);
+                ms.WriteByte(0x01);
+                ms.WriteByte(0x00);
+                ms.WriteByte(0x00);
+                ms.WriteByte(0x3F);
+                ms.WriteByte(0x00);
+
+                var writer = new JpegBitWriter(ms);
+                var dcTable = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+                var acTable = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceAcBits, JpegHuffmanTable.StandardLuminanceAcValues);
+
+                writer.WriteSymbol(0x00, dcTable);
+                writer.WriteSymbol(0x00, acTable);
+                writer.Flush();
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xD9);
+
+                ms.Position = 0;
+                var decoded = JpegDecoder.Decode(ms);
+
+                AssertEqual(8, decoded.Width, "Largura Grayscale");
+                AssertEqual(8, decoded.Height, "Altura Grayscale");
+
+                for (int y = 0; y < 8; y++)
+                {
+                    for (int x = 0; x < 8; x++)
+                    {
+                        var p = decoded.GetPixel(x, y);
+                        AssertEqual(p.R, p.G, "Grayscale R == G");
+                        AssertEqual(p.G, p.B, "Grayscale G == B");
+                        AssertEqual((byte)255, p.A, "Grayscale Alfa = 255");
+                    }
+                }
+            }
+        }
+
+        private static void Test_Jpeg_RestartInterval_DRI_RSTm()
+        {
+            int w = 16;
+            int h = 8;
+            var original = new PixelBuffer(w, h);
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    original.SetPixel(x, y, new PixelColor((byte)(x * 15), (byte)(y * 30), 120, 255));
+                }
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+
+                var qLum = new JpegQuantizationTable(JpegQuantizationTable.StandardLuminance);
+                var qChr = new JpegQuantizationTable(JpegQuantizationTable.StandardChrominance);
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(132);
+                ms.WriteByte(0x00); ms.Write(qLum.ToZigzagBytes(), 0, 64);
+                ms.WriteByte(0x01); ms.Write(qChr.ToZigzagBytes(), 0, 64);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xDD);
+                ms.WriteByte(0x00); ms.WriteByte(0x04);
+                ms.WriteByte(0x00); ms.WriteByte(0x01); // Ri = 1
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(17);
+                ms.WriteByte(0x08);
+                ms.WriteByte(0x00); ms.WriteByte(0x08);
+                ms.WriteByte(0x00); ms.WriteByte(0x10);
+                ms.WriteByte(0x03);
+                ms.WriteByte(0x01); ms.WriteByte(0x11); ms.WriteByte(0x00);
+                ms.WriteByte(0x02); ms.WriteByte(0x11); ms.WriteByte(0x01);
+                ms.WriteByte(0x03); ms.WriteByte(0x11); ms.WriteByte(0x01);
+
+                var dcLum = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+                var acLum = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceAcBits, JpegHuffmanTable.StandardLuminanceAcValues);
+                var dcChr = new JpegHuffmanTable(JpegHuffmanTable.StandardChrominanceDcBits, JpegHuffmanTable.StandardChrominanceDcValues);
+                var acChr = new JpegHuffmanTable(JpegHuffmanTable.StandardChrominanceAcBits, JpegHuffmanTable.StandardChrominanceAcValues);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00); ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16); ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length));
+                ms.WriteByte(0x10); ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16); ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardChrominanceDcValues.Length));
+                ms.WriteByte(0x01); ms.Write(JpegHuffmanTable.StandardChrominanceDcBits, 0, 16); ms.Write(JpegHuffmanTable.StandardChrominanceDcValues, 0, JpegHuffmanTable.StandardChrominanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardChrominanceAcValues.Length));
+                ms.WriteByte(0x11); ms.Write(JpegHuffmanTable.StandardChrominanceAcBits, 0, 16); ms.Write(JpegHuffmanTable.StandardChrominanceAcValues, 0, JpegHuffmanTable.StandardChrominanceAcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(12);
+                ms.WriteByte(0x03);
+                ms.WriteByte(0x01); ms.WriteByte(0x00);
+                ms.WriteByte(0x02); ms.WriteByte(0x11);
+                ms.WriteByte(0x03); ms.WriteByte(0x11);
+                ms.WriteByte(0x00); ms.WriteByte(0x3F); ms.WriteByte(0x00);
+
+                var writer = new JpegBitWriter(ms);
+                writer.WriteSymbol(0x00, dcLum); writer.WriteSymbol(0x00, acLum);
+                writer.WriteSymbol(0x00, dcChr); writer.WriteSymbol(0x00, acChr);
+                writer.WriteSymbol(0x00, dcChr); writer.WriteSymbol(0x00, acChr);
+                writer.Flush();
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xD0); // RST0
+
+                writer = new JpegBitWriter(ms);
+                writer.WriteSymbol(0x00, dcLum); writer.WriteSymbol(0x00, acLum);
+                writer.WriteSymbol(0x00, dcChr); writer.WriteSymbol(0x00, acChr);
+                writer.WriteSymbol(0x00, dcChr); writer.WriteSymbol(0x00, acChr);
+                writer.Flush();
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xD9); // EOI
+
+                ms.Position = 0;
+                var decoded = JpegDecoder.Decode(ms);
+
+                AssertEqual(16, decoded.Width, "Largura após RSTm");
+                AssertEqual(8, decoded.Height, "Altura após RSTm");
+            }
+        }
+
+        private static void Test_Jpeg_Security_InvalidSignature_Rejection()
+        {
+            byte[] invalid = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+            bool threw = false;
+            try
+            {
+                using (var ms = new MemoryStream(invalid))
+                {
+                    JpegDecoder.Decode(ms);
+                }
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("SOI") || ex.Message.Contains("Assinatura"))
+                {
+                    threw = true;
+                }
+            }
+            Assert(threw, "Assinatura inválida (sem SOI 0xFFD8) deve lançar CorruptDataException");
+        }
+
+        private static void Test_Jpeg_Security_UnsupportedProfile_SOF2_Rejection()
+        {
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC2); // SOF2
+                ms.WriteByte(0x00); ms.WriteByte(0x0B);
+                ms.Write(new byte[9], 0, 9);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (UnsupportedFormatException ex)
+                {
+                    if (ex.Message.Contains("Progressive") || ex.Message.Contains("SOF2"))
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Perfil SOF2 (Progressive) deve lançar UnsupportedFormatException");
+            }
+        }
+
+        private static void Test_Jpeg_Security_UnsupportedPrecision_Rejection()
+        {
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(0x0B);
+                ms.WriteByte(12); // Precisão 12-bit
+                ms.WriteByte(0x00); ms.WriteByte(0x10);
+                ms.WriteByte(0x00); ms.WriteByte(0x10);
+                ms.WriteByte(0x01);
+                ms.WriteByte(0x01); ms.WriteByte(0x11); ms.WriteByte(0x00);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (UnsupportedFormatException ex)
+                {
+                    if (ex.Message.Contains("Precisão") || ex.Message.Contains("12 bits"))
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "Precisão de 12 bits deve lançar UnsupportedFormatException");
+            }
+        }
+
+        private static void Test_Jpeg_Security_UnsupportedComponents_CMYK_Rejection()
+        {
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(20);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(0x10);
+                ms.WriteByte(0x00); ms.WriteByte(0x10);
+                ms.WriteByte(4); // CMYK
+                for (int i = 0; i < 4; i++)
+                {
+                    ms.WriteByte((byte)(i + 1));
+                    ms.WriteByte(0x11);
+                    ms.WriteByte(0x00);
+                }
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (UnsupportedFormatException ex)
+                {
+                    if (ex.Message.Contains("4 componentes") || ex.Message.Contains("CMYK"))
+                    {
+                        threw = true;
+                    }
+                }
+                Assert(threw, "JPEG com 4 componentes (CMYK) deve lançar UnsupportedFormatException");
+            }
+        }
+
+        private static void Test_Jpeg_Security_Dimensions_Limits()
+        {
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(0x00); // H = 0
+                ms.WriteByte(0x00); ms.WriteByte(0x10);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (CorruptDataException)
+                {
+                    threw = true;
+                }
+                Assert(threw, "Dimensão zerada em JPEG deve lançar CorruptDataException");
+            }
+
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x40); ms.WriteByte(0x01); // H = 16385
+                ms.WriteByte(0x00); ms.WriteByte(0x10);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                ms.Position = 0;
+                bool threw = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (ResourceLimitException)
+                {
+                    threw = true;
+                }
+                Assert(threw, "Dimensão > 16384 em JPEG deve lançar ResourceLimitException");
+            }
+        }
+
+        private static void Test_Jpeg_Security_TruncatedStream_Rejection()
+        {
+            byte[] truncated = new byte[] { 0xFF, 0xD8, 0xFF, 0xC0, 0x00 };
+            bool threw = false;
+            try
+            {
+                using (var ms = new MemoryStream(truncated))
+                {
+                    JpegDecoder.Decode(ms);
+                }
+            }
+            catch (CorruptDataException)
+            {
+                threw = true;
+            }
+            Assert(threw, "Fluxo JPEG truncado deve lançar CorruptDataException");
+        }
+
+        private static void Test_Jpeg_Engine_Inspect()
+        {
+            var pb = new PixelBuffer(64, 48);
+            pb.Fill(new PixelColor(100, 150, 200, 255));
+
+            byte[] jpegBytes;
+            using (var ms = new MemoryStream())
+            {
+                JpegEncoder.Encode(pb, ms, quality: 90, useSubsampling420: true);
+                jpegBytes = ms.ToArray();
+            }
+
+            var engine = new JpegEngine();
+            using (var ms = new MemoryStream(jpegBytes))
+            {
+                var info = engine.Inspect(ms, "test.jpg");
+                AssertEqual("jpeg", info.FormatId, "FormatId inspecionado");
+                AssertEqual("image/jpeg", info.MimeType, "MimeType inspecionado");
+                AssertEqual(64, info.Width, "Width inspecionado");
+                AssertEqual(48, info.Height, "Height inspecionado");
+                Assert(info.IsSupported, "IsSupported deve ser true");
+                AssertEqual("4:2:0", info.Metadata["Sampling"], "Subsampling inspecionado");
+                AssertEqual("8-bit", info.Metadata["Precision"], "Precisão inspecionada");
+            }
+        }
+
+        private static void Test_Jpeg_Engine_Convert_Transforms()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_jpeg_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string inputPath = Path.Combine(tempDir, "input.jpg");
+                var pb = new PixelBuffer(100, 100);
+                pb.Fill(new PixelColor(50, 80, 120, 255));
+                using (var fs = File.Create(inputPath))
+                {
+                    JpegEncoder.Encode(pb, fs, quality: 90);
+                }
+
+                var engine = new JpegEngine();
+                var req = new ConvertRequest
+                {
+                    InputPath = inputPath,
+                    TargetFormat = "jpg",
+                    OutputDirectory = tempDir
+                };
+                req.Settings["cropWidth"] = "50";
+                req.Settings["cropHeight"] = "50";
+                req.Settings["cropPosition"] = "center";
+                req.Settings["resizeWidth"] = "80";
+                req.Settings["resizeHeight"] = "80";
+                req.Settings["watermarkText"] = "LODINO";
+                req.Settings["watermarkScale"] = "1";
+
+                var res = engine.Convert(req, null);
+                AssertEqual("completed", res.Status, "Status da conversão");
+                Assert(File.Exists(res.OutputPath), "Arquivo de saída gerado");
+
+                using (var fs = File.OpenRead(res.OutputPath))
+                {
+                    var decoded = JpegDecoder.Decode(fs);
+                    AssertEqual(80, decoded.Width, "Largura após transformações");
+                    AssertEqual(80, decoded.Height, "Altura após transformações");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, true);
+                }
+            }
+        }
+
+        private static void Test_Jpeg_Bidirectional_Routes()
+        {
+            var registry = EngineRegistry.Default;
+
+            var eJpegBmp = registry.Resolve("jpeg", "bmp");
+            AssertEqual("image-jpeg", eJpegBmp.EngineId, "Resolve jpeg -> bmp");
+
+            var eBmpJpeg = registry.Resolve("bmp", "jpeg");
+            AssertEqual("image-jpeg", eBmpJpeg.EngineId, "Resolve bmp -> jpeg");
+
+            var eJpegPng = registry.Resolve("jpeg", "png");
+            AssertEqual("image-jpeg", eJpegPng.EngineId, "Resolve jpeg -> png");
+
+            var ePngJpeg = registry.Resolve("png", "jpeg");
+            AssertEqual("image-jpeg", ePngJpeg.EngineId, "Resolve png -> jpeg");
+
+            var eJpgJpg = registry.Resolve("jpg", "jpg");
+            AssertEqual("image-jpeg", eJpgJpg.EngineId, "Resolve jpg -> jpg");
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_routes_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                var pb = new PixelBuffer(16, 16);
+                for (int y = 0; y < 16; y++)
+                    for (int x = 0; x < 16; x++)
+                        pb.SetPixel(x, y, new PixelColor((byte)(x * 15), (byte)(y * 15), 180, 255));
+
+                string originalJpeg = Path.Combine(tempDir, "source.jpg");
+                using (var fs = File.Create(originalJpeg))
+                {
+                    JpegEncoder.Encode(pb, fs, quality: 95, useSubsampling420: false);
+                }
+
+                // Rota 1: JPEG -> BMP
+                var reqJpegBmp = new ConvertRequest { InputPath = originalJpeg, TargetFormat = "bmp", OutputDirectory = tempDir };
+                var resJpegBmp = eJpegBmp.Convert(reqJpegBmp, null);
+                Assert(File.Exists(resJpegBmp.OutputPath), "Arquivo BMP gerado a partir de JPEG");
+                using (var fs = File.OpenRead(resJpegBmp.OutputPath))
+                {
+                    var bmpDecoded = BmpDecoder.Decode(fs);
+                    AssertEqual(16, bmpDecoded.Width, "Width BMP a partir de JPEG");
+                    AssertEqual(16, bmpDecoded.Height, "Height BMP a partir de JPEG");
+                }
+
+                // Rota 2: BMP -> JPEG
+                var reqBmpJpeg = new ConvertRequest { InputPath = resJpegBmp.OutputPath, TargetFormat = "jpg", OutputDirectory = tempDir };
+                var resBmpJpeg = eBmpJpeg.Convert(reqBmpJpeg, null);
+                Assert(File.Exists(resBmpJpeg.OutputPath), "Arquivo JPEG gerado a partir de BMP");
+                using (var fs = File.OpenRead(resBmpJpeg.OutputPath))
+                {
+                    var jpegDecoded = JpegDecoder.Decode(fs);
+                    AssertEqual(16, jpegDecoded.Width, "Width JPEG a partir de BMP");
+                    AssertEqual(16, jpegDecoded.Height, "Height JPEG a partir de BMP");
+                }
+
+                // Rota 3: JPEG -> PNG
+                var reqJpegPng = new ConvertRequest { InputPath = originalJpeg, TargetFormat = "png", OutputDirectory = tempDir };
+                var resJpegPng = eJpegPng.Convert(reqJpegPng, null);
+                Assert(File.Exists(resJpegPng.OutputPath), "Arquivo PNG gerado a partir de JPEG");
+                using (var fs = File.OpenRead(resJpegPng.OutputPath))
+                {
+                    var pngDecoded = PngDecoder.Decode(fs);
+                    AssertEqual(16, pngDecoded.Width, "Width PNG a partir de JPEG");
+                    AssertEqual(16, pngDecoded.Height, "Height PNG a partir de JPEG");
+                }
+
+                // Rota 4: PNG -> JPEG
+                var reqPngJpeg = new ConvertRequest { InputPath = resJpegPng.OutputPath, TargetFormat = "jpg", OutputDirectory = tempDir };
+                var resPngJpeg = ePngJpeg.Convert(reqPngJpeg, null);
+                Assert(File.Exists(resPngJpeg.OutputPath), "Arquivo JPEG gerado a partir de PNG");
+                using (var fs = File.OpenRead(resPngJpeg.OutputPath))
+                {
+                    var jpegFromPng = JpegDecoder.Decode(fs);
+                    AssertEqual(16, jpegFromPng.Width, "Width JPEG a partir de PNG");
+                    AssertEqual(16, jpegFromPng.Height, "Height JPEG a partir de PNG");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, true);
+                }
+            }
+        }
+
+        #endregion
+
         #endregion
 
         #endregion
@@ -2564,3 +3389,4 @@ namespace Lodino.Tests
         #endregion
     }
 }
+
