@@ -84,7 +84,6 @@ namespace Lodino.Core.Formats.Image
 
                 byte[] rowBuffer = new byte[stride];
                 bool isTopDown = header.IsTopDown;
-                bool hasNonZeroAlpha = false;
 
                 // Processa linha por linha respeitando a orientação do BMP
                 for (int i = 0; i < height; i++)
@@ -132,26 +131,14 @@ namespace Lodino.Core.Formats.Image
                             byte b = rowBuffer[srcIdx];
                             byte g = rowBuffer[srcIdx + 1];
                             byte r = rowBuffer[srcIdx + 2];
-                            byte a = rowBuffer[srcIdx + 3];
-
-                            if (a > 0) hasNonZeroAlpha = true;
-
+                            // Em BITMAPINFOHEADER (40 bytes) com BI_RGB de 32 bits, o quarto byte é canal reservado (BGRX).
+                            // A semântica estrita trata os pixels como opacos, normalizando o canal alfa para 255
+                            // independentemente de conter 0x00, 0xFF ou qualquer valor intermediário.
                             rawPixels[dstIdx] = r;
                             rawPixels[dstIdx + 1] = g;
                             rawPixels[dstIdx + 2] = b;
-                            rawPixels[dstIdx + 3] = a;
+                            rawPixels[dstIdx + 3] = 255;
                         }
-                    }
-                }
-
-                // Em BMP 32-bit (BI_RGB), imagens clássicas de GDI gravavam o 4º byte como 0x00 (BGRX)
-                // Se nenhum pixel da imagem tiver alfa > 0, normalizamos todos para 255 (opacos)
-                // para evitar que a imagem seja incorretamente tratada como invisível.
-                if (bpp == 32 && !hasNonZeroAlpha)
-                {
-                    for (int p = 3; p < rawPixels.Length; p += 4)
-                    {
-                        rawPixels[p] = 255;
                     }
                 }
 

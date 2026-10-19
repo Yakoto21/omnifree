@@ -81,12 +81,11 @@ namespace Lodino.Core.Formats.Image
                             byte r = rawPixels[srcIdx];
                             byte g = rawPixels[srcIdx + 1];
                             byte b = rawPixels[srcIdx + 2];
-                            byte a = rawPixels[srcIdx + 3];
 
                             rowBuffer[dstIdx] = b;
                             rowBuffer[dstIdx + 1] = g;
                             rowBuffer[dstIdx + 2] = r;
-                            rowBuffer[dstIdx + 3] = a;
+                            rowBuffer[dstIdx + 3] = 0; // Byte reservado X (BGRX opaco em BI_RGB)
                         }
                     }
 

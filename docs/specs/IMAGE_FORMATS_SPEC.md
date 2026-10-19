@@ -47,13 +47,15 @@ $$\text{paddingBytes} = \text{stride} - \text{rowDataBytes}$$
 - **24-bit (BGR):** 3 bytes por pixel. O padding varia entre 0 e 3 bytes por linha.
 - **32-bit (BGRA/BGRX):** 4 bytes por pixel. O stride é sempre $4 \times \text{width}$, com zero padding.
 
-### 2.3 Tratamento de Orientação e Canal Alfa
+### 2.3 Tratamento de Orientação e Semântica de 32 bits
 
 1. **Orientação:**
    - **Bottom-up:** O scanline 0 do arquivo corresponde à linha $H - 1$ da imagem renderizada. A leitura inverte a ordem vertical.
    - **Top-down:** O scanline 0 do arquivo corresponde à linha 0 da imagem. A leitura segue a ordem direta.
-2. **Recuperação de Alfa em BGRX:**
-   - Em BMPs 32-bit `BI_RGB` legados gerados pelo Windows GDI, o 4º byte era frequentemente gravado como `0x00` (não utilizado). Se todos os pixels tiverem alfa igual a 0, o decodificador normaliza para 255 (totalmente opaco), prevenindo que a imagem seja indevidamente tratada como transparente.
+2. **Semântica Estrita de 32-bit BI_RGB (BGRX Opaco):**
+   - Na especificação padrão de `BITMAPINFOHEADER` (40 bytes) com compressão `BI_RGB` (0), os pixels de 32 bits são definidos pelo padrão Windows DIB como `BGRX`, onde o quarto byte (`X`) é um byte de alinhamento reservado e não define um canal alfa normativo.
+   - O decodificador trata todos os pixels de BMP 32-bit `BI_RGB` como estritamente opacos, normalizando o canal alfa em memória para 255 independentemente de o byte reservado conter `0x00`, `0xFF` ou qualquer valor intermediário. Nenhuma heurística ad-hoc é empregada como regra de conformidade.
+   - O suporte a transparência em BMP fica explicitamente reservado para uma etapa posterior, na qual variantes com máscaras de bits (`BI_BITFIELDS`) ou cabeçalhos estendidos (`BITMAPV4HEADER` / `BITMAPV5HEADER`) forem devidamente implementadas e validadas.
 
 ---
 

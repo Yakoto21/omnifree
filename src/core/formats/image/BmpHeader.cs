@@ -133,7 +133,7 @@ namespace Lodino.Core.Formats.Image
             if (header.BitCount != 24 && header.BitCount != 32)
             {
                 throw new UnsupportedFormatException(string.Format(
-                    "Profundidade de cor {0} bpp não é suportada para BMP. Apenas 24 bits (BGR) e 32 bits (BGRA) não comprimidos são suportados.",
+                    "Profundidade de cor {0} bpp não é suportada para BMP. Apenas 24 bits (BGR) e 32 bits (BGRX opaco) não comprimidos são suportados.",
                     header.BitCount));
             }
 

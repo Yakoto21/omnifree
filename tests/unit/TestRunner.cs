@@ -88,8 +88,8 @@ namespace Lodino.Tests
 
             // --- BMP: Variantes 24-bit e 32-bit Round-trip ---
             RunTest("BMP: Round-trip de fidelidade 24-bit BGR", Test_Bmp_24bit_RoundTrip);
-            RunTest("BMP: Round-trip de fidelidade 32-bit BGRA com canal alfa", Test_Bmp_32bit_Alpha_RoundTrip);
-            RunTest("BMP: Normalização de 32-bit BGRX (todos alfa zerados -> 255)", Test_Bmp_32bit_Bgrx_AlphaRecovery);
+            RunTest("BMP: 32-bit BI_RGB semântica BGRX opaca com valores variados no byte alto", Test_Bmp_32bit_Bgrx_ArbitraryHighBytes_NormalizesOpaque);
+            RunTest("BMP: Round-trip 32-bit BGRX (preservação estrita dos canais RGB com A=255)", Test_Bmp_32bit_Bgrx_RoundTrip);
 
             // --- BMP: Orientação de Linhas ---
             RunTest("BMP: Decodificação correta de Bottom-Up (padrão Windows)", Test_Bmp_BottomUp_Orientation);
@@ -112,6 +112,13 @@ namespace Lodino.Tests
             RunTest("BMP (Segurança): Proteção contra dimensões excessivas (> 16.384 pixels)", Test_Bmp_Security_ExceedMaxDimension);
             RunTest("BMP (Segurança): Rejeição de arquivo truncado (dados de scanline insuficientes)", Test_Bmp_Security_TruncatedFile);
             RunTest("BMP (Segurança): Rejeição de bfOffBits apontando para fora do arquivo", Test_Bmp_Security_InvalidOffBits);
+
+            // --- BMP: Fixtures Independentes e Validação Rigorosa (Fase B) ---
+            RunTest("BMP (Fixture Independente): 24-bit com variantes de padding (0, 1, 2 e 3 bytes)", Test_Bmp_Independent_24bit_PaddingVariants_0_1_2_3);
+            RunTest("BMP (Fixture Independente): Deslocamento bfOffBits personalizado com metadados", Test_Bmp_Independent_CustomOffBits_WithMetadataHeader);
+            RunTest("BMP (Fixture Independente): Equivalência exata entre Bottom-Up e Top-Down", Test_Bmp_Independent_TopDown_vs_BottomUp_ExactDuality);
+            RunTest("BMP (Fixture Independente): Truncamento de cabeçalho e corrupção de offsets", Test_Bmp_Independent_HeaderTruncation_And_SizeMismatch);
+            RunTest("BMP (Fixture Independente): Detecção e bloqueio de overflow em dimensões", Test_Bmp_Independent_DimensionOverflow);
 
             // --- BMP: Integração do Motor BmpEngine e Registry ---
             RunTest("BMP (Engine): Inspeção de metadados via BmpEngine.Inspect", Test_Bmp_Engine_Inspect);
@@ -740,34 +747,73 @@ namespace Lodino.Tests
             }
         }
 
-        private static void Test_Bmp_32bit_Alpha_RoundTrip()
+        private static void Test_Bmp_32bit_Bgrx_ArbitraryHighBytes_NormalizesOpaque()
         {
-            var pb = new PixelBuffer(4, 4);
-            pb.SetPixel(0, 0, new PixelColor(255, 0, 0, 128));
-            pb.SetPixel(1, 1, new PixelColor(0, 255, 0, 64));
-            pb.SetPixel(2, 2, new PixelColor(0, 0, 255, 200));
-            pb.SetPixel(3, 3, new PixelColor(255, 255, 255, 0));
-            byte[] encoded = BmpEncoder.Encode(pb, 32);
-            AssertEqual(118, encoded.Length, "Tamanho total 32-bit BMP");
-            var decoded = BmpDecoder.Decode(encoded);
-            AssertEqual(new PixelColor(255, 0, 0, 128), decoded.GetPixel(0, 0), "Pixel com alfa 128");
-            AssertEqual(new PixelColor(0, 255, 0, 64), decoded.GetPixel(1, 1), "Pixel com alfa 64");
-            AssertEqual(new PixelColor(0, 0, 255, 200), decoded.GetPixel(2, 2), "Pixel com alfa 200");
-            AssertEqual(new PixelColor(255, 255, 255, 0), decoded.GetPixel(3, 3), "Pixel com alfa 0");
+            // Constrói manualmente um BMP de 2x2 32-bit BI_RGB onde o 4º byte varia: 0x00, 0x40, 0x80, 0xFF
+            // Todos os 4 pixels devem decodificar com A=255 (opacos) e manter os canais RGB exatos
+            byte[] bytes = new byte[54 + 8 * 2]; // 2x2 32-bit: stride = 2 * 4 = 8 bytes. Total = 70 bytes.
+            using (var ms = new MemoryStream(bytes))
+            using (var bw = new BinaryWriter(ms))
+            {
+                bw.Write((ushort)0x4D42);
+                bw.Write((uint)bytes.Length);
+                bw.Write((uint)0);
+                bw.Write((uint)54);
+                bw.Write((uint)40);
+                bw.Write((int)2);
+                bw.Write((int)2); // bottom-up
+                bw.Write((ushort)1);
+                bw.Write((ushort)32); // 32 bpp
+                bw.Write((uint)0); // BI_RGB
+                bw.Write((uint)(8 * 2));
+                bw.Write((int)2835);
+                bw.Write((int)2835);
+                bw.Write((uint)0);
+                bw.Write((uint)0);
+                // Scanline 0 do arquivo (fundo, y=1):
+                // (0, 1): B=10, G=20, R=30, X=0x00
+                bw.Write((byte)10); bw.Write((byte)20); bw.Write((byte)30); bw.Write((byte)0x00);
+                // (1, 1): B=40, G=50, R=60, X=0x40
+                bw.Write((byte)40); bw.Write((byte)50); bw.Write((byte)60); bw.Write((byte)0x40);
+                // Scanline 1 do arquivo (topo, y=0):
+                // (0, 0): B=70, G=80, R=90, X=0x80
+                bw.Write((byte)70); bw.Write((byte)80); bw.Write((byte)90); bw.Write((byte)0x80);
+                // (1, 0): B=100, G=110, R=120, X=0xFF
+                bw.Write((byte)100); bw.Write((byte)110); bw.Write((byte)120); bw.Write((byte)0xFF);
+            }
+
+            var decoded = BmpDecoder.Decode(bytes);
+            AssertEqual(2, decoded.Width, "Width");
+            AssertEqual(2, decoded.Height, "Height");
+
+            // Verifica normalização do alfa para 255 e preservação de RGB
+            AssertEqual(new PixelColor(90, 80, 70, 255), decoded.GetPixel(0, 0), "Pixel (0,0) com X=0x80 normalizado para A=255");
+            AssertEqual(new PixelColor(120, 110, 100, 255), decoded.GetPixel(1, 0), "Pixel (1,0) com X=0xFF normalizado para A=255");
+            AssertEqual(new PixelColor(30, 20, 10, 255), decoded.GetPixel(0, 1), "Pixel (0,1) com X=0x00 normalizado para A=255");
+            AssertEqual(new PixelColor(60, 50, 40, 255), decoded.GetPixel(1, 1), "Pixel (1,1) com X=0x40 normalizado para A=255");
         }
 
-        private static void Test_Bmp_32bit_Bgrx_AlphaRecovery()
+        private static void Test_Bmp_32bit_Bgrx_RoundTrip()
         {
-            var pb = new PixelBuffer(2, 2);
-            pb.SetPixel(0, 0, new PixelColor(100, 150, 200, 0));
-            pb.SetPixel(1, 0, new PixelColor(110, 160, 210, 0));
-            pb.SetPixel(0, 1, new PixelColor(120, 170, 220, 0));
-            pb.SetPixel(1, 1, new PixelColor(130, 180, 230, 0));
+            var pb = new PixelBuffer(4, 4);
+            for (int y = 0; y < 4; y++)
+            {
+                for (int x = 0; x < 4; x++)
+                {
+                    pb.SetPixel(x, y, new PixelColor((byte)(x * 50), (byte)(y * 50), 200, 255));
+                }
+            }
             byte[] encoded = BmpEncoder.Encode(pb, 32);
             var decoded = BmpDecoder.Decode(encoded);
-            AssertEqual((byte)255, decoded.GetPixel(0, 0).A, "Alfa normalizado para 255 em BGRX");
-            AssertEqual((byte)255, decoded.GetPixel(1, 1).A, "Alfa normalizado para 255 em BGRX");
-            AssertEqual((byte)100, decoded.GetPixel(0, 0).R, "Canal R preservado");
+            AssertEqual(4, decoded.Width, "Width 4");
+            AssertEqual(4, decoded.Height, "Height 4");
+            for (int y = 0; y < 4; y++)
+            {
+                for (int x = 0; x < 4; x++)
+                {
+                    AssertEqual(pb.GetPixel(x, y), decoded.GetPixel(x, y), string.Format("Pixel BGRX ({0},{1})", x, y));
+                }
+            }
         }
 
         private static void Test_Bmp_BottomUp_Orientation()
@@ -1065,6 +1111,197 @@ namespace Lodino.Tests
             Assert(engine != null, "Motor BMP resolvido");
             AssertEqual("image-bmp", engine.EngineId, "EngineId image-bmp");
         }
+
+        #region Testes de Fixtures Independentes (Fase B)
+
+        private static byte[] CreateRawBmp(int width, int rawHeight, ushort bpp, byte[] pixelBytes, int offBits = 54, byte[] extraHeaderBytes = null)
+        {
+            using (var ms = new MemoryStream())
+            using (var bw = new BinaryWriter(ms))
+            {
+                int extraLen = extraHeaderBytes != null ? extraHeaderBytes.Length : 0;
+                int totalOffBits = Math.Max(offBits, 54 + extraLen);
+                int totalSize = totalOffBits + pixelBytes.Length;
+
+                // BITMAPFILEHEADER (14 bytes)
+                bw.Write((ushort)0x4D42);
+                bw.Write((uint)totalSize);
+                bw.Write((ushort)0);
+                bw.Write((ushort)0);
+                bw.Write((uint)totalOffBits);
+
+                // BITMAPINFOHEADER (40 bytes)
+                bw.Write((uint)40);
+                bw.Write(width);
+                bw.Write(rawHeight);
+                bw.Write((ushort)1);
+                bw.Write(bpp);
+                bw.Write((uint)0); // BI_RGB
+                bw.Write((uint)pixelBytes.Length);
+                bw.Write(2835);
+                bw.Write(2835);
+                bw.Write((uint)0);
+                bw.Write((uint)0);
+
+                // Metadados adicionais pré-pixel (se offBits > 54)
+                if (extraLen > 0)
+                {
+                    bw.Write(extraHeaderBytes, 0, extraLen);
+                }
+
+                // Preenchimento até offBits se houver lacuna
+                while (ms.Position < totalOffBits)
+                {
+                    bw.Write((byte)0);
+                }
+
+                bw.Write(pixelBytes, 0, pixelBytes.Length);
+                return ms.ToArray();
+            }
+        }
+
+        private static void Test_Bmp_Independent_24bit_PaddingVariants_0_1_2_3()
+        {
+            // 1. Padding 0: 4x1 (stride = 12, rowData = 12, pad = 0)
+            // Pixels BGR: P0=(0,0,255), P1=(0,255,0), P2=(255,0,0), P3=(255,255,255)
+            byte[] p0_data = new byte[] {
+                0, 0, 255,     // P0: Red
+                0, 255, 0,     // P1: Green
+                255, 0, 0,     // P2: Blue
+                255, 255, 255  // P3: White
+            };
+            var dec0 = BmpDecoder.Decode(CreateRawBmp(4, 1, 24, p0_data));
+            AssertEqual(PixelColor.Red, dec0.GetPixel(0, 0), "Pad0 P0");
+            AssertEqual(PixelColor.Green, dec0.GetPixel(1, 0), "Pad0 P1");
+            AssertEqual(PixelColor.Blue, dec0.GetPixel(2, 0), "Pad0 P2");
+            AssertEqual(PixelColor.White, dec0.GetPixel(3, 0), "Pad0 P3");
+
+            // 2. Padding 1: 1x2 (stride = 4, rowData = 3, pad = 1 com byte de lixo 0xAA)
+            // Bottom-up: scanline 0 é y=1, scanline 1 é y=0
+            byte[] p1_data = new byte[] {
+                0, 255, 255, 0xAA, // y=1: Amarelo (B=0, G=255, R=255) + pad 0xAA
+                255, 255, 0, 0xBB  // y=0: Ciano (B=255, G=255, R=0) + pad 0xBB
+            };
+            var dec1 = BmpDecoder.Decode(CreateRawBmp(1, 2, 24, p1_data));
+            AssertEqual(PixelColor.Cyan, dec1.GetPixel(0, 0), "Pad1 y=0 Ciano");
+            AssertEqual(PixelColor.Yellow, dec1.GetPixel(0, 1), "Pad1 y=1 Amarelo");
+
+            // 3. Padding 2: 2x1 (stride = 8, rowData = 6, pad = 2 com lixo 0xDE, 0xAD)
+            byte[] p2_data = new byte[] {
+                255, 0, 255,   // P0: Magenta
+                0, 0, 0,       // P1: Preto
+                0xDE, 0xAD     // pad de 2 bytes
+            };
+            var dec2 = BmpDecoder.Decode(CreateRawBmp(2, 1, 24, p2_data));
+            AssertEqual(PixelColor.Magenta, dec2.GetPixel(0, 0), "Pad2 P0 Magenta");
+            AssertEqual(PixelColor.Black, dec2.GetPixel(1, 0), "Pad2 P1 Preto");
+
+            // 4. Padding 3: 3x1 (stride = 12, rowData = 9, pad = 3 com lixo 0x11, 0x22, 0x33)
+            byte[] p3_data = new byte[] {
+                50, 60, 70,     // P0
+                80, 90, 100,    // P1
+                110, 120, 130,  // P2
+                0x11, 0x22, 0x33 // pad de 3 bytes
+            };
+            var dec3 = BmpDecoder.Decode(CreateRawBmp(3, 1, 24, p3_data));
+            AssertEqual(new PixelColor(70, 60, 50, 255), dec3.GetPixel(0, 0), "Pad3 P0");
+            AssertEqual(new PixelColor(100, 90, 80, 255), dec3.GetPixel(1, 0), "Pad3 P1");
+            AssertEqual(new PixelColor(130, 120, 110, 255), dec3.GetPixel(2, 0), "Pad3 P2");
+        }
+
+        private static void Test_Bmp_Independent_CustomOffBits_WithMetadataHeader()
+        {
+            // offBits = 80 (54 bytes do cabeçalho + 20 bytes de dados personalizados + 6 bytes pad)
+            byte[] extra = Encoding.ASCII.GetBytes("LODINO-METADATA-PAD!"); // 20 bytes
+            byte[] pixelData = new byte[] { 100, 150, 200, 0 }; // 1x1 24-bit stride 4
+            byte[] fileBytes = CreateRawBmp(1, 1, 24, pixelData, 80, extra);
+
+            var decoded = BmpDecoder.Decode(fileBytes);
+            AssertEqual(1, decoded.Width, "Width");
+            AssertEqual(1, decoded.Height, "Height");
+            AssertEqual(new PixelColor(200, 150, 100, 255), decoded.GetPixel(0, 0), "Pixel decodificado após offset arbitrário");
+        }
+
+        private static void Test_Bmp_Independent_TopDown_vs_BottomUp_ExactDuality()
+        {
+            // Imagem 2x2:
+            // y=0: P(0,0)=Vermelho, P(1,0)=Verde
+            // y=1: P(0,1)=Azul, P(1,1)=Branco
+            // Stride = 8 bytes (6 dados + 2 pad)
+
+            // Bottom-Up: Linha 0 do arquivo é y=1 (Azul, Branco), Linha 1 do arquivo é y=0 (Vermelho, Verde)
+            byte[] bu_pixels = new byte[] {
+                255, 0, 0,    255, 255, 255, 0, 0, // y=1: Azul, Branco, pad 2
+                0, 0, 255,    0, 255, 0,     0, 0  // y=0: Vermelho, Verde, pad 2
+            };
+            byte[] bu_file = CreateRawBmp(2, 2, 24, bu_pixels);
+
+            // Top-Down: Linha 0 do arquivo é y=0 (Vermelho, Verde), Linha 1 do arquivo é y=1 (Azul, Branco)
+            byte[] td_pixels = new byte[] {
+                0, 0, 255,    0, 255, 0,     0, 0, // y=0: Vermelho, Verde, pad 2
+                255, 0, 0,    255, 255, 255, 0, 0  // y=1: Azul, Branco, pad 2
+            };
+            byte[] td_file = CreateRawBmp(2, -2, 24, td_pixels);
+
+            var decBU = BmpDecoder.Decode(bu_file);
+            var decTD = BmpDecoder.Decode(td_file);
+
+            AssertEqual(decBU.GetPixel(0, 0), decTD.GetPixel(0, 0), "Duality (0,0) Vermelho");
+            AssertEqual(decBU.GetPixel(1, 0), decTD.GetPixel(1, 0), "Duality (1,0) Verde");
+            AssertEqual(decBU.GetPixel(0, 1), decTD.GetPixel(0, 1), "Duality (0,1) Azul");
+            AssertEqual(decBU.GetPixel(1, 1), decTD.GetPixel(1, 1), "Duality (1,1) Branco");
+        }
+
+        private static void Test_Bmp_Independent_HeaderTruncation_And_SizeMismatch()
+        {
+            // Arquivo com menos de 54 bytes
+            byte[] shortFile = new byte[35];
+            shortFile[0] = 0x42; shortFile[1] = 0x4D;
+            bool threwShort = false;
+            try { BmpDecoder.Decode(shortFile); } catch (CorruptDataException) { threwShort = true; }
+            Assert(threwShort, "Rejeita arquivo com tamanho menor que cabeçalho padrão");
+
+            // bfOffBits menor que 54
+            byte[] badOff = CreateRawBmp(1, 1, 24, new byte[] { 0, 0, 0, 0 });
+            badOff[10] = 30; badOff[11] = 0; badOff[12] = 0; badOff[13] = 0;
+            bool threwBadOff = false;
+            try { BmpDecoder.Decode(badOff); } catch (CorruptDataException) { threwBadOff = true; }
+            Assert(threwBadOff, "Rejeita bfOffBits < 54");
+
+            // bfOffBits apontando para além do comprimento do arquivo
+            badOff[10] = 0x00; badOff[11] = 0x10; // 4096
+            bool threwBeyond = false;
+            try { BmpDecoder.Decode(badOff); } catch (CorruptDataException) { threwBeyond = true; }
+            Assert(threwBeyond, "Rejeita bfOffBits apontando além do EOF");
+        }
+
+        private static void Test_Bmp_Independent_DimensionOverflow()
+        {
+            byte[] bmp = CreateRawBmp(2, 2, 24, new byte[16]);
+
+            // biWidth = 0x40000000 (causaria overflow em (width * 24 + 31)/32 se não protegido)
+            bmp[18] = 0x00; bmp[19] = 0x00; bmp[20] = 0x00; bmp[21] = 0x40;
+            bool threwWidth = false;
+            try { BmpDecoder.Decode(bmp); }
+            catch (Exception ex) { if (ex is ResourceLimitException || ex is CorruptDataException) threwWidth = true; }
+            Assert(threwWidth, "Bloqueia overflow de largura (0x40000000)");
+
+            // biHeight = 0
+            bmp[18] = 2; bmp[19] = 0; bmp[20] = 0; bmp[21] = 0; // restaura width
+            bmp[22] = 0; bmp[23] = 0; bmp[24] = 0; bmp[25] = 0; // height = 0
+            bool threwZeroH = false;
+            try { BmpDecoder.Decode(bmp); } catch (CorruptDataException) { threwZeroH = true; }
+            Assert(threwZeroH, "Rejeita biHeight == 0");
+
+            // biWidth = -5
+            bmp[18] = 0xFB; bmp[19] = 0xFF; bmp[20] = 0xFF; bmp[21] = 0xFF; // -5
+            bmp[22] = 2; bmp[23] = 0; bmp[24] = 0; bmp[25] = 0;
+            bool threwNegW = false;
+            try { BmpDecoder.Decode(bmp); } catch (CorruptDataException) { threwNegW = true; }
+            Assert(threwNegW, "Rejeita biWidth negativo");
+        }
+
+        #endregion
 
         #endregion
     }
