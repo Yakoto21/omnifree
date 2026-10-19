@@ -20,7 +20,7 @@ namespace Lodino.Core.Formats.Image.Png
             }
         }
 
-        public static byte[] Decompress(Stream stream, long maxOutputBytes = SecurityLimits.DefaultMaxImageFileSize)
+        public static byte[] Decompress(Stream stream, long maxOutputBytes = SecurityLimits.DefaultMaxImageFileSize, bool allowTrailingBytes = false)
         {
             if (stream == null) throw new ArgumentNullException("stream");
 
@@ -81,7 +81,10 @@ namespace Lodino.Core.Formats.Image.Png
                     actualAdler, expectedAdler));
             }
 
-            if (stream.ReadByte() != -1)
+            // ISO/IEC 15948 §10.2 estabelece que um decodificador PNG deve ignorar bytes residuais não consumidos
+            // após o término do fluxo ZLIB dentro da sequência de chunks IDAT.
+            // Para fluxos ZLIB puros isolados (RFC 1950), a presença de bytes extras continua sendo estritamente rejeitada.
+            if (!allowTrailingBytes && stream.ReadByte() != -1)
             {
                 throw new CorruptDataException("Dados espúrios detectados após o término do fluxo ZLIB.");
             }

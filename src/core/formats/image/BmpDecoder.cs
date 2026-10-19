@@ -21,7 +21,7 @@ namespace Lodino.Core.Formats.Image
             }
         }
 
-        public static PixelBuffer Decode(Stream stream)
+        public static PixelBuffer Decode(Stream stream, long maxStreamBytes = SecurityLimits.DefaultMaxImageFileSize)
         {
             if (stream == null) throw new ArgumentNullException("stream");
             if (!stream.CanRead) throw new ArgumentException("Stream deve suportar leitura.", "stream");
@@ -42,16 +42,16 @@ namespace Lodino.Core.Formats.Image
                     while ((read = stream.Read(copyBuf, 0, copyBuf.Length)) > 0)
                     {
                         totalCopied += read;
-                        if (totalCopied > SecurityLimits.DefaultMaxImageFileSize)
+                        if (totalCopied > maxStreamBytes)
                         {
                             throw new ResourceLimitException(string.Format(
                                 "Fluxo de imagem excede o tamanho máximo permitido de {0:N0} bytes.",
-                                SecurityLimits.DefaultMaxImageFileSize));
+                                maxStreamBytes));
                         }
                         ms.Write(copyBuf, 0, read);
                     }
                     ms.Position = 0;
-                    return Decode(ms);
+                    return Decode(ms, maxStreamBytes);
                 }
             }
 
@@ -76,7 +76,7 @@ namespace Lodino.Core.Formats.Image
                     long bytesToSkip = header.OffBits - stream.Position;
                     if (bytesToSkip > 0)
                     {
-                        StreamUtils.SkipBytes(stream, bytesToSkip, SecurityLimits.DefaultMaxImageFileSize);
+                        StreamUtils.SkipBytes(stream, bytesToSkip, maxStreamBytes);
                     }
                 }
 

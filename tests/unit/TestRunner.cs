@@ -160,6 +160,8 @@ namespace Lodino.Tests
             RunTest("HARDENING: Rejeição de árvores de Huffman sobre-subscritas (Violação de Kraft)", Test_Hardening_Huffman_Oversubscribed_Tree);
             RunTest("HARDENING: Leitura segura de streams não-navegáveis (CanSeek = false) no BMP", Test_Hardening_Bmp_NonSeekable_Stream);
             RunTest("HARDENING: Rejeição de bytes espúrios após Adler-32 em fluxo ZLIB", Test_Hardening_Zlib_Trailing_Garbage);
+            RunTest("HARDENING: Tolerância a bytes residuais (padding) no último IDAT (ISO/IEC 15948 §10.2)", Test_Hardening_Png_Idat_TrailingPadding_Allowed);
+            RunTest("HARDENING: Rejeição de streams não-seekable no BMP que excedam o limite de entrada", Test_Hardening_Bmp_NonSeekable_Stream_LimitExceeded);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -2452,6 +2454,107 @@ namespace Lodino.Tests
                 }
             }
             Assert(threwTrailing, "ZLIB com bytes espúrios após Adler-32 deve lançar CorruptDataException");
+        }
+
+        private static void Test_Hardening_Png_Idat_TrailingPadding_Allowed()
+        {
+            var pb = new PixelBuffer(4, 4);
+            for (int y = 0; y < 4; y++)
+                for (int x = 0; x < 4; x++)
+                    pb.SetPixel(x, y, new PixelColor((byte)(x * 60), (byte)(y * 60), 100, 255));
+
+            byte[] validPng = PngEncoder.Encode(pb, true);
+
+            // Reconstrói o PNG adicionando 4 bytes de padding no último IDAT com CRC recalculado
+            using (var msIn = new MemoryStream(validPng))
+            using (var msOut = new MemoryStream())
+            {
+                byte[] sig = new byte[8];
+                msIn.Read(sig, 0, 8);
+                msOut.Write(sig, 0, 8);
+
+                PngChunk chunk;
+                while ((chunk = PngChunk.Read(msIn)) != null)
+                {
+                    if (chunk.Type == "IDAT")
+                    {
+                        // Adiciona 4 bytes de preenchimento (padding) após o término do fluxo ZLIB
+                        byte[] paddedData = new byte[chunk.Data.Length + 4];
+                        Buffer.BlockCopy(chunk.Data, 0, paddedData, 0, chunk.Data.Length);
+                        // Cria chunk com dados aumentados (PngChunk calcula novo CRC-32 válido)
+                        var paddedChunk = new PngChunk("IDAT", paddedData);
+                        paddedChunk.Write(msOut);
+                    }
+                    else
+                    {
+                        chunk.Write(msOut);
+                    }
+                }
+
+                byte[] paddedPngBytes = msOut.ToArray();
+
+                // Decodifica via Lodino PngDecoder: deve ignorar bytes residuais conforme ISO/IEC 15948 §10.2
+                PixelBuffer decoded = PngDecoder.Decode(paddedPngBytes);
+                AssertEqual(4, decoded.Width, "Width com IDAT padded");
+                AssertEqual(4, decoded.Height, "Height com IDAT padded");
+                AssertEqual(pb.GetPixel(2, 2), decoded.GetPixel(2, 2), "Pixel fidelity com IDAT padded");
+            }
+        }
+
+        private class SyntheticOverLimitStream : Stream
+        {
+            private readonly long _totalBytes;
+            private long _bytesRead = 0;
+
+            public SyntheticOverLimitStream(long totalBytes)
+            {
+                _totalBytes = totalBytes;
+            }
+
+            public override bool CanRead { get { return true; } }
+            public override bool CanSeek { get { return false; } }
+            public override bool CanWrite { get { return false; } }
+            public override long Length { get { throw new NotSupportedException(); } }
+            public override long Position
+            {
+                get { throw new NotSupportedException(); }
+                set { throw new NotSupportedException(); }
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (_bytesRead >= _totalBytes) return 0;
+                int toRead = (int)Math.Min(count, _totalBytes - _bytesRead);
+                Array.Clear(buffer, offset, toRead);
+                _bytesRead += toRead;
+                return toRead;
+            }
+
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
+            public override void SetLength(long value) { throw new NotSupportedException(); }
+            public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+        }
+
+        private static void Test_Hardening_Bmp_NonSeekable_Stream_LimitExceeded()
+        {
+            // Stream sintético não-seekable com 50.000 bytes e limite injetado de 10.000 bytes
+            using (var stream = new SyntheticOverLimitStream(50000))
+            {
+                bool threwLimit = false;
+                try
+                {
+                    BmpDecoder.Decode(stream, 10000);
+                }
+                catch (ResourceLimitException ex)
+                {
+                    if (ex.Message.Contains("excede o tamanho máximo permitido"))
+                    {
+                        threwLimit = true;
+                    }
+                }
+                Assert(threwLimit, "Stream não-seekable excedendo maxStreamBytes deve lançar ResourceLimitException");
+            }
         }
 
         #endregion

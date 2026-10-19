@@ -123,8 +123,10 @@ namespace Lodino.Core.Formats.Image.Png
                 long expectedTotalBytesLong = SecurityLimits.CalculateExpectedScanlineBytes(width, height, bytesPerPixel);
                 int expectedTotalBytes = checked((int)expectedTotalBytesLong);
 
-                byte[] compressedIdat = idatStream.ToArray();
-                byte[] decompressed = ZlibStream.Decompress(compressedIdat, expectedTotalBytes);
+                // Elimina cópia redundante (idatStream.ToArray()) consumindo diretamente o stream acumulado.
+                // allowTrailingBytes: true respeita a especificação ISO/IEC 15948 §10.2 ignorando padding residual no último IDAT.
+                idatStream.Position = 0;
+                byte[] decompressed = ZlibStream.Decompress(idatStream, expectedTotalBytes, allowTrailingBytes: true);
 
                 // 5. Validação da integridade de tamanho do fluxo descomprimido
                 if (decompressed.Length != expectedTotalBytes)
