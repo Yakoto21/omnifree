@@ -1,0 +1,17 @@
+{
+  "project": "Lodino",
+  "version": "2.0.0",
+  "active": true,
+  "metrics": {
+    "speedMs": 14.5,
+    "totalTasks": 42,
+    "ratio": 1.75e-2
+  },
+  "tags": [
+    "native",
+    "proprietary",
+    "zero-dependencies"
+  ],
+  "nullField": null,
+  "unicodeTest": "Acentuação em Português: á, é, í, ó, ú, ç, ã, õ e emojis \u00A9 \u00AE"
+}
