@@ -23,13 +23,38 @@ namespace Lodino.Core.Formats.Image.Jpeg
             public int AcTableId;
         }
 
-        public static PixelBuffer Decode(Stream stream)
+        public static PixelBuffer Decode(Stream stream, long maxStreamBytes = SecurityLimits.DefaultMaxImageFileSize)
         {
             if (stream == null) throw new ArgumentNullException("stream");
+            if (!stream.CanRead) throw new ArgumentException("Stream deve suportar leitura.", "stream");
 
-            if (stream.CanSeek)
+            try
             {
-                SecurityLimits.AssertFileSize(stream.Length, SecurityLimits.DefaultMaxImageFileSize);
+                long length = stream.Length;
+                SecurityLimits.AssertFileSize(length, maxStreamBytes);
+            }
+            catch (NotSupportedException)
+            {
+                // Se o stream não suporta Length (não-seekable), copia com limite estrito de bytes
+                using (var ms = new MemoryStream())
+                {
+                    byte[] copyBuf = new byte[8192];
+                    int read;
+                    long totalCopied = 0;
+                    while ((read = stream.Read(copyBuf, 0, copyBuf.Length)) > 0)
+                    {
+                        totalCopied += read;
+                        if (totalCopied > maxStreamBytes)
+                        {
+                            throw new ResourceLimitException(string.Format(
+                                "Fluxo JPEG excede o tamanho máximo permitido de {0:N0} bytes.",
+                                maxStreamBytes));
+                        }
+                        ms.Write(copyBuf, 0, read);
+                    }
+                    ms.Position = 0;
+                    return Decode(ms, maxStreamBytes);
+                }
             }
 
             // 1. Valida SOI (Start of Image 0xFFD8)
@@ -186,7 +211,15 @@ namespace Lodino.Core.Formats.Image.Jpeg
         private static void ReadDqt(Stream stream, JpegQuantizationTable[] qTables)
         {
             int length = ReadBigEndian16(stream);
+            if (length < 2)
+            {
+                throw new CorruptDataException("Comprimento de segmento DQT inválido (< 2).");
+            }
             int remaining = length - 2;
+            if (remaining == 0)
+            {
+                throw new CorruptDataException("Segmento DQT vazio (comprimento 2 sem tabelas).");
+            }
 
             while (remaining > 0)
             {
@@ -223,7 +256,15 @@ namespace Lodino.Core.Formats.Image.Jpeg
         private static void ReadDht(Stream stream, JpegHuffmanTable[] dcTables, JpegHuffmanTable[] acTables)
         {
             int length = ReadBigEndian16(stream);
+            if (length < 2)
+            {
+                throw new CorruptDataException("Comprimento de segmento DHT inválido (< 2).");
+            }
             int remaining = length - 2;
+            if (remaining == 0)
+            {
+                throw new CorruptDataException("Segmento DHT vazio (comprimento 2 sem tabelas).");
+            }
 
             while (remaining > 0)
             {
@@ -319,6 +360,22 @@ namespace Lodino.Core.Formats.Image.Jpeg
                 int h = (sampling >> 4) & 0x0F;
                 int v = sampling & 0x0F;
 
+                // D-01: ISO/IEC 10918-1 §B.2.2: Hi e Vi devem estar no intervalo 1..4
+                if (h < 1 || h > 4 || v < 1 || v > 4)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Fatores de amostragem inválidos para componente {0}: H={1}, V={2} (devem estar entre 1 e 4).",
+                        id, h, v));
+                }
+
+                // D-02: Seletor de tabela de quantização deve estar no intervalo 0..3
+                if (qTableId < 0 || qTableId > 3)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Seletor de tabela de quantização inválido para componente {0}: {1} (deve estar entre 0 e 3).",
+                        id, qTableId));
+                }
+
                 components.Add(new ComponentInfo
                 {
                     Id = id,
@@ -356,8 +413,19 @@ namespace Lodino.Core.Formats.Image.Jpeg
                     throw new CorruptDataException(string.Format("Componente SOS {0} não corresponde aos componentes definidos no SOF0.", compId));
                 }
 
-                comp.DcTableId = (tables >> 4) & 0x0F;
-                comp.AcTableId = tables & 0x0F;
+                int dcTableId = (tables >> 4) & 0x0F;
+                int acTableId = tables & 0x0F;
+
+                // D-02: Seletores de tabelas Huffman devem estar no intervalo 0..3
+                if (dcTableId < 0 || dcTableId > 3 || acTableId < 0 || acTableId > 3)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Seletores de tabela Huffman inválidos para componente {0}: DC={1}, AC={2} (devem estar entre 0 e 3).",
+                        compId, dcTableId, acTableId));
+                }
+
+                comp.DcTableId = dcTableId;
+                comp.AcTableId = acTableId;
             }
 
             int ss = stream.ReadByte();
@@ -374,12 +442,48 @@ namespace Lodino.Core.Formats.Image.Jpeg
             List<ComponentInfo> components, JpegQuantizationTable[] qTables,
             JpegHuffmanTable[] dcTables, JpegHuffmanTable[] acTables, int restartInterval)
         {
+            // Valida pré-requisitos: existência das tabelas de quantização e Huffman referenciadas
+            for (int i = 0; i < components.Count; i++)
+            {
+                var comp = components[i];
+                if (qTables[comp.QTableId] == null)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Tabela de quantização {0} referenciada pelo componente {1} não foi definida no fluxo.",
+                        comp.QTableId, comp.Id));
+                }
+                if (dcTables[comp.DcTableId] == null)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Tabela Huffman DC {0} referenciada pelo componente {1} não foi definida no fluxo.",
+                        comp.DcTableId, comp.Id));
+                }
+                if (acTables[comp.AcTableId] == null)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Tabela Huffman AC {0} referenciada pelo componente {1} não foi definida no fluxo.",
+                        comp.AcTableId, comp.Id));
+                }
+            }
+
             int maxH = 1;
             int maxV = 1;
             for (int i = 0; i < components.Count; i++)
             {
                 if (components[i].H > maxH) maxH = components[i].H;
                 if (components[i].V > maxV) maxV = components[i].V;
+            }
+
+            // D-01: Valida que maxH e maxV são múltiplos exatos dos fatores de amostragem do componente
+            for (int i = 0; i < components.Count; i++)
+            {
+                var comp = components[i];
+                if ((maxH % comp.H) != 0 || (maxV % comp.V) != 0)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Fatores de amostragem incompatíveis para componente {0}: maxH={1}, compH={2}, maxV={3}, compV={4}.",
+                        comp.Id, maxH, comp.H, maxV, comp.V));
+                }
             }
 
             int mcuWidth = maxH * 8;
@@ -459,13 +563,13 @@ namespace Lodino.Core.Formats.Image.Jpeg
                                 // IDCT 2D
                                 FastDct.InverseTransform(blockFloat, blockDecoded);
 
-                                // Armazena amostras decodificadas no plano
+                                // Armazena amostras decodificadas no plano (D-09: mapeamento explícito por componente)
+                                byte[] targetPlane = (c == 0) ? planeY : (c == 1 ? planeCb : planeCr);
                                 if (comp.H == maxH && comp.V == maxV)
                                 {
                                     // Bloco com amostragem total
                                     int blockPixelX = mcuX * mcuWidth + h * 8;
                                     int blockPixelY = mcuY * mcuHeight + v * 8;
-                                    byte[] targetPlane = (c == 0) ? planeY : (c == 1 ? planeCb : planeCr);
                                     CopyBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth);
                                 }
                                 else
@@ -475,7 +579,6 @@ namespace Lodino.Core.Formats.Image.Jpeg
                                     int scaleY = maxV / comp.V;
                                     int blockPixelX = mcuX * mcuWidth + h * (8 * scaleX);
                                     int blockPixelY = mcuY * mcuHeight + v * (8 * scaleY);
-                                    byte[] targetPlane = (c == 1) ? planeCb : planeCr;
                                     CopyAndUpsampleBlockToPlane(blockDecoded, targetPlane, blockPixelX, blockPixelY, paddedWidth, scaleX, scaleY);
                                 }
                             }
@@ -552,7 +655,12 @@ namespace Lodino.Core.Formats.Image.Jpeg
 
                 if (symbol == 0xF0)
                 {
-                    // ZRL (Zero Run Length): 16 zeros
+                    // D-07: ZRL (Zero Run Length): 16 zeros. O bloco possui 64 coeficientes (0..63).
+                    if (k + 16 > 64)
+                    {
+                        throw new CorruptDataException(string.Format(
+                            "Símbolo ZRL (16 zeros) ultrapassa os limites do bloco 8x8 na posição k={0}.", k));
+                    }
                     k += 16;
                     continue;
                 }

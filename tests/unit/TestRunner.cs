@@ -188,6 +188,18 @@ namespace Lodino.Tests
             RunTest("JPEG (Engine): Pipeline completo de transformações (crop, resize, watermark)", Test_Jpeg_Engine_Convert_Transforms);
             RunTest("JPEG (Rotas Bidirecionais): Matriz completa JPEG <-> BMP, JPEG <-> PNG e JPEG <-> JPEG", Test_Jpeg_Bidirectional_Routes);
 
+            // =================================================
+            //   LODINO NATIVE CORE — HARDENING JPEG (FASE 7)  
+            //   Módulo: Resiliência Adversarial e Hardening   
+            // =================================================
+            RunTest("HARDENING JPEG: Validação estrita de fatores de amostragem Hi/Vi e múltiplos (D-01)", Test_Hardening_Jpeg_SamplingFactors_Validation);
+            RunTest("HARDENING JPEG: Limites de seletores de tabela (0..3) e existência prévia (D-02)", Test_Hardening_Jpeg_TableSelectors_Bounds_And_Existence);
+            RunTest("HARDENING JPEG: Validação estrutural de comprimentos de segmentos DQT/DHT (D-03)", Test_Hardening_Jpeg_SegmentLengths_DqtDht_Validation);
+            RunTest("HARDENING JPEG: Validação de transbordamento de bloco no símbolo ZRL 0xF0 (D-07)", Test_Hardening_Jpeg_ZRL_BlockBoundary_Validation);
+            RunTest("HARDENING JPEG: Sincronização SOF e metadados JFIF APP0 (DPI, unidades) no Inspect (D-04, D-05)", Test_Hardening_Jpeg_Engine_Inspect_SofSync_And_JfifApp0);
+            RunTest("HARDENING JPEG: Codificação e decodificação monocromática Grayscale 1:1 (D-08)", Test_Hardening_Jpeg_Grayscale_Encoder_Roundtrip);
+            RunTest("HARDENING JPEG: Rejeição de streams JPEG não-seekable que excedam o limite de entrada", Test_Hardening_Jpeg_NonSeekable_Stream_LimitExceeded);
+
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
             Console.WriteLine("-------------------------------------------------");
@@ -3379,6 +3391,559 @@ namespace Lodino.Tests
                 }
             }
         }
+
+        #region Casos de Teste Hardening JPEG (Fase 7)
+
+        private static void Test_Hardening_Jpeg_SamplingFactors_Validation()
+        {
+            // D-01: Fator H = 0
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0); // SOF0
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(1); // 1 componente
+                ms.WriteByte(1); // ID 1
+                ms.WriteByte(0x01); // H=0, V=1
+                ms.WriteByte(0); // QTable 0
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("Fatores de amostragem")) threw = true;
+                }
+                Assert(threw, "H=0 deve lançar CorruptDataException");
+            }
+
+            // D-01: Fator V = 0
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0); // SOF0
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(1); // 1 componente
+                ms.WriteByte(1); // ID 1
+                ms.WriteByte(0x10); // H=1, V=0
+                ms.WriteByte(0); // QTable 0
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("Fatores de amostragem")) threw = true;
+                }
+                Assert(threw, "V=0 deve lançar CorruptDataException");
+            }
+
+            // D-01: Fator H > 4 (ex: 5)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0); // SOF0
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(1); // 1 componente
+                ms.WriteByte(1); // ID 1
+                ms.WriteByte(0x51); // H=5, V=1
+                ms.WriteByte(0); // QTable 0
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("Fatores de amostragem")) threw = true;
+                }
+                Assert(threw, "H=5 deve lançar CorruptDataException");
+            }
+
+            // D-01: Fatores incompatíveis (não-múltiplos: Y H=3, Cb H=2)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB); // DQT
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00);
+                ms.Write(new byte[64], 0, 64);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0); // SOF0
+                ms.WriteByte(0x00); ms.WriteByte(17);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(24);
+                ms.WriteByte(0x00); ms.WriteByte(24);
+                ms.WriteByte(3); // 3 componentes
+                ms.WriteByte(1); ms.WriteByte(0x31); ms.WriteByte(0); // Y: H=3, V=1
+                ms.WriteByte(2); ms.WriteByte(0x21); ms.WriteByte(0); // Cb: H=2, V=1
+                ms.WriteByte(3); ms.WriteByte(0x11); ms.WriteByte(0); // Cr: H=1, V=1
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4); // DHT DC 0
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4); // DHT AC 0
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA); // SOS
+                ms.WriteByte(0x00); ms.WriteByte(12);
+                ms.WriteByte(3);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(2); ms.WriteByte(0x00);
+                ms.WriteByte(3); ms.WriteByte(0x00);
+                ms.WriteByte(0x00); ms.WriteByte(63); ms.WriteByte(0x00);
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("incompatíveis")) threw = true;
+                }
+                Assert(threw, "Fatores não múltiplos (H=3 e H=2) devem lançar CorruptDataException");
+            }
+        }
+
+        private static void Test_Hardening_Jpeg_TableSelectors_Bounds_And_Existence()
+        {
+            // D-02: QTableId = 4 em SOF0 (> 3)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(4); // QTableId = 4
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("tabela de quantização inválido")) threw = true;
+                }
+                Assert(threw, "QTableId = 4 deve lançar CorruptDataException");
+            }
+
+            // D-02: QTableId referenciado não definido no fluxo
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                // Não inclui marcador DQT!
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0); // QTableId = 0 (mas qTables[0] == null)
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(0x00); ms.WriteByte(63); ms.WriteByte(0x00);
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("não foi definida")) threw = true;
+                }
+                Assert(threw, "QTableId referenciado sem DQT prévio deve lançar CorruptDataException");
+            }
+
+            // D-02: DcTableId = 4 em SOS (> 3)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00); ms.Write(new byte[64], 0, 64);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(0x00); ms.WriteByte(16);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x40); // DC=4 (>3), AC=0
+                ms.WriteByte(0x00); ms.WriteByte(63); ms.WriteByte(0x00);
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("tabela Huffman inválidos")) threw = true;
+                }
+                Assert(threw, "DcTableId = 4 deve lançar CorruptDataException");
+            }
+        }
+
+        private static void Test_Hardening_Jpeg_SegmentLengths_DqtDht_Validation()
+        {
+            // D-03: DQT com comprimento < 2
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(0x01); // len = 1 (< 2)
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.IndexOf("DQT", StringComparison.OrdinalIgnoreCase) >= 0 && ex.Message.IndexOf("inválido", StringComparison.OrdinalIgnoreCase) >= 0) threw = true;
+                }
+                Assert(threw, "DQT com length=1 deve lançar CorruptDataException");
+            }
+
+            // D-03: DQT com comprimento = 2 (vazio)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(0x02); // len = 2 (vazio)
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.IndexOf("vazio", StringComparison.OrdinalIgnoreCase) >= 0) threw = true;
+                }
+                Assert(threw, "DQT com length=2 deve lançar CorruptDataException");
+            }
+
+            // D-03: DHT com comprimento < 2
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte(0x00); // len = 0 (< 2)
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.IndexOf("DHT", StringComparison.OrdinalIgnoreCase) >= 0 && ex.Message.IndexOf("inválido", StringComparison.OrdinalIgnoreCase) >= 0) threw = true;
+                }
+                Assert(threw, "DHT com length=0 deve lançar CorruptDataException");
+            }
+
+            // D-03: DHT com comprimento = 2 (vazio)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8);
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte(0x02); // len = 2 (vazio)
+
+                ms.Position = 0;
+                bool threw = false;
+                try { JpegDecoder.Decode(ms); }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.IndexOf("vazio", StringComparison.OrdinalIgnoreCase) >= 0) threw = true;
+                }
+                Assert(threw, "DHT com length=2 deve lançar CorruptDataException");
+            }
+        }
+
+        private static void Test_Hardening_Jpeg_ZRL_BlockBoundary_Validation()
+        {
+            // D-07: Símbolo ZRL 0xF0 na posição k=49 ultrapassa o bloco 8x8 (49 + 16 = 65 > 64)
+            var dcTable = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceDcBits, JpegHuffmanTable.StandardLuminanceDcValues);
+            var acTable = new JpegHuffmanTable(JpegHuffmanTable.StandardLuminanceAcBits, JpegHuffmanTable.StandardLuminanceAcValues);
+            var qTable = JpegQuantizationTable.Scale(JpegQuantizationTable.StandardLuminance, 90);
+
+            // Caso Inválido: 4 símbolos ZRL (16 * 4 = 64 zeros após k=1 -> k=65)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+
+                // DQT
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00);
+                ms.Write(qTable.ToZigzagBytes(), 0, 64);
+
+                // SOF0 (8x8 monocromático)
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                // DHT DC 0
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                // DHT AC 0
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                int acLen = 2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length;
+                ms.WriteByte((byte)(acLen >> 8)); ms.WriteByte((byte)(acLen & 0xFF));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                // SOS
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(0x00); ms.WriteByte(63); ms.WriteByte(0x00);
+
+                // Scan entropy data
+                var writer = new JpegBitWriter(ms);
+                writer.WriteSymbol(0x00, dcTable); // DC diff = 0
+                // 4 símbolos ZRL consecutivos: 16 + 16 + 16 + 16 = 64 zeros a partir de k=1 -> k=65!
+                writer.WriteSymbol(0xF0, acTable); // k=17
+                writer.WriteSymbol(0xF0, acTable); // k=33
+                writer.WriteSymbol(0xF0, acTable); // k=49
+                writer.WriteSymbol(0xF0, acTable); // k=65 (ultrapassa 64!)
+                writer.Flush();
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xD9); // EOI
+
+                ms.Position = 0;
+                bool threwZrl = false;
+                try
+                {
+                    JpegDecoder.Decode(ms);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("ZRL") && ex.Message.Contains("ultrapassa os limites"))
+                    {
+                        threwZrl = true;
+                    }
+                }
+                Assert(threwZrl, "ZRL transbordando bloco 8x8 deve lançar CorruptDataException");
+            }
+
+            // Caso Válido Limite: ZRL exatamente na fronteira final (k=48 -> k=64)
+            using (var ms = new MemoryStream())
+            {
+                ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+
+                // DQT
+                ms.WriteByte(0xFF); ms.WriteByte(0xDB);
+                ms.WriteByte(0x00); ms.WriteByte(67);
+                ms.WriteByte(0x00);
+                ms.Write(qTable.ToZigzagBytes(), 0, 64);
+
+                // SOF0 (8x8 monocromático)
+                ms.WriteByte(0xFF); ms.WriteByte(0xC0);
+                ms.WriteByte(0x00); ms.WriteByte(11);
+                ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x11); ms.WriteByte(0);
+
+                // DHT DC 0
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                ms.WriteByte(0x00); ms.WriteByte((byte)(2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceDcValues.Length));
+                ms.WriteByte(0x00);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceDcValues, 0, JpegHuffmanTable.StandardLuminanceDcValues.Length);
+
+                // DHT AC 0
+                ms.WriteByte(0xFF); ms.WriteByte(0xC4);
+                int acLen = 2 + 1 + 16 + JpegHuffmanTable.StandardLuminanceAcValues.Length;
+                ms.WriteByte((byte)(acLen >> 8)); ms.WriteByte((byte)(acLen & 0xFF));
+                ms.WriteByte(0x10);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcBits, 0, 16);
+                ms.Write(JpegHuffmanTable.StandardLuminanceAcValues, 0, JpegHuffmanTable.StandardLuminanceAcValues.Length);
+
+                // SOS
+                ms.WriteByte(0xFF); ms.WriteByte(0xDA);
+                ms.WriteByte(0x00); ms.WriteByte(8);
+                ms.WriteByte(1);
+                ms.WriteByte(1); ms.WriteByte(0x00);
+                ms.WriteByte(0x00); ms.WriteByte(63); ms.WriteByte(0x00);
+
+                // Scan entropy data:
+                // k=1 -> 2 ZRLs (32 zeros) levam k para 33.
+                // Símbolo 0xE1 (14 zeros + 1 valor) leva k de 33 a 47; escreve valor em 47; k vira 48.
+                // ZRL em k=48 leva k exatamente a 64 (fim perfeito do bloco)!
+                var writer = new JpegBitWriter(ms);
+                writer.WriteSymbol(0x00, dcTable); // DC diff = 0
+                writer.WriteSymbol(0xF0, acTable); // k=17
+                writer.WriteSymbol(0xF0, acTable); // k=33
+                writer.WriteSymbol(0xE1, acTable); // 14 zeros
+                writer.WriteBits(1, 1);            // valor 1 (+1)
+                writer.WriteSymbol(0xF0, acTable); // k=48 -> k=64 (fronteira exata!)
+                writer.Flush();
+
+                ms.WriteByte(0xFF); ms.WriteByte(0xD9); // EOI
+
+                ms.Position = 0;
+                var decoded = JpegDecoder.Decode(ms);
+                AssertEqual(8, decoded.Width, "Largura após ZRL exato");
+                AssertEqual(8, decoded.Height, "Altura após ZRL exato");
+            }
+        }
+
+        private static void Test_Hardening_Jpeg_Engine_Inspect_SofSync_And_JfifApp0()
+        {
+            var engine = new JpegEngine();
+
+            // D-04: Testa que todos os marcadores SOF não-baseline são reportados como não-suportados
+            ushort[] unsupportedSofs = new ushort[]
+            {
+                JpegMarker.SOF1, JpegMarker.SOF2, JpegMarker.SOF3,
+                JpegMarker.SOF5, JpegMarker.SOF6, JpegMarker.SOF7,
+                JpegMarker.SOF9, JpegMarker.SOF10, JpegMarker.SOF11,
+                JpegMarker.SOF13, JpegMarker.SOF14, JpegMarker.SOF15
+            };
+
+            foreach (var sof in unsupportedSofs)
+            {
+                using (var ms = new MemoryStream())
+                {
+                    ms.WriteByte(0xFF); ms.WriteByte(0xD8); // SOI
+                    ms.WriteByte((byte)(sof >> 8)); ms.WriteByte((byte)(sof & 0xFF)); // SOF
+                    ms.WriteByte(0x00); ms.WriteByte(11);
+                    ms.Write(new byte[9], 0, 9);
+
+                    ms.Position = 0;
+                    var info = engine.Inspect(ms, "test.jpg");
+                    Assert(!info.IsSupported, "SOF marker 0x" + sof.ToString("X4") + " deve ser IsSupported = false");
+                    Assert(info.Metadata.ContainsKey("UnsupportedProfile"), "Deve registrar UnsupportedProfile para 0x" + sof.ToString("X4"));
+                }
+            }
+
+            // D-05: Valida extração de metadados JFIF APP0 (versão, unidades, DPI)
+            var pb = new PixelBuffer(32, 32);
+            pb.Fill(new PixelColor(120, 140, 160, 255));
+            using (var ms = new MemoryStream())
+            {
+                JpegEncoder.Encode(pb, ms, quality: 85);
+                ms.Position = 0;
+                var info = engine.Inspect(ms, "test_jfif.jpg");
+
+                AssertEqual("1.01", info.Metadata["JfifVersion"], "JfifVersion inspecionado");
+                AssertEqual("DPI (dots per inch)", info.Metadata["DensityUnits"], "DensityUnits inspecionado");
+                AssertEqual("72", info.Metadata["XDensity"], "XDensity inspecionado");
+                AssertEqual("72", info.Metadata["YDensity"], "YDensity inspecionado");
+            }
+        }
+
+        private static void Test_Hardening_Jpeg_Grayscale_Encoder_Roundtrip()
+        {
+            // D-08: Codificação e decodificação de imagem monocromática de 1 componente
+            var pb = new PixelBuffer(24, 24);
+            for (int y = 0; y < 24; y++)
+            {
+                for (int x = 0; x < 24; x++)
+                {
+                    byte gray = (byte)(x * 8 + y * 2);
+                    pb.SetPixel(x, y, new PixelColor(gray, gray, gray, 255));
+                }
+            }
+
+            byte[] grayJpegBytes;
+            using (var ms = new MemoryStream())
+            {
+                JpegEncoder.Encode(pb, ms, quality: 90, grayscale: true);
+                grayJpegBytes = ms.ToArray();
+            }
+
+            // Inspeciona metadados via JpegEngine
+            var engine = new JpegEngine();
+            using (var ms = new MemoryStream(grayJpegBytes))
+            {
+                var info = engine.Inspect(ms, "grayscale.jpg");
+                Assert(info.IsSupported, "Grayscale JPEG deve ser suportado");
+                AssertEqual(24, info.Width, "Largura do grayscale");
+                AssertEqual(24, info.Height, "Altura do grayscale");
+                AssertEqual("1 (Grayscale)", info.Metadata["ColorComponents"], "1 componente de cor");
+                AssertEqual("1:1 (Grayscale)", info.Metadata["Sampling"], "Subamostragem Grayscale 1:1");
+            }
+
+            // Decodifica via JpegDecoder
+            using (var ms = new MemoryStream(grayJpegBytes))
+            {
+                var decoded = JpegDecoder.Decode(ms);
+                AssertEqual(24, decoded.Width, "Largura decodificada");
+                AssertEqual(24, decoded.Height, "Altura decodificada");
+
+                // Valida fidelidade e que R == G == B em todos os pixels
+                double sumSq = 0;
+                for (int y = 0; y < 24; y++)
+                {
+                    for (int x = 0; x < 24; x++)
+                    {
+                        var orig = pb.GetPixel(x, y);
+                        var dec = decoded.GetPixel(x, y);
+                        AssertEqual(dec.R, dec.G, "Canal R == G no pixel decodificado");
+                        AssertEqual(dec.R, dec.B, "Canal R == B no pixel decodificado");
+                        AssertEqual((byte)255, dec.A, "Canal Alfa deve ser 255");
+
+                        double diff = orig.R - dec.R;
+                        sumSq += diff * diff;
+                    }
+                }
+                double mse = sumSq / (24 * 24);
+                double psnr = mse > 0 ? 10.0 * Math.Log10(255.0 * 255.0 / mse) : 99.0;
+                Assert(psnr > 32.0, string.Format("PSNR do grayscale roundtrip ({0:F2} dB) deve ser > 32 dB", psnr));
+            }
+        }
+
+        private static void Test_Hardening_Jpeg_NonSeekable_Stream_LimitExceeded()
+        {
+            // Stream sintético não-seekable com 50.000 bytes e limite injetado de 10.000 bytes
+            using (var stream = new SyntheticOverLimitStream(50000))
+            {
+                bool threwLimit = false;
+                try
+                {
+                    JpegDecoder.Decode(stream, maxStreamBytes: 10000);
+                }
+                catch (ResourceLimitException ex)
+                {
+                    if (ex.Message.Contains("Fluxo JPEG excede o tamanho máximo"))
+                    {
+                        threwLimit = true;
+                    }
+                }
+                Assert(threwLimit, "Stream JPEG não-seekable excedendo limite deve lançar ResourceLimitException");
+            }
+        }
+
+        #endregion
 
         #endregion
 

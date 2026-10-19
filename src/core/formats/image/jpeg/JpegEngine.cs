@@ -169,22 +169,77 @@ namespace Lodino.Core.Formats.Image.Jpeg
                         inspection.Metadata["Sampling"] = sampling;
                         done = true;
                     }
+                    else if (marker == JpegMarker.APP0)
+                    {
+                        int len = ReadBigEndian16(inputStream);
+                        if (len < 2)
+                        {
+                            throw new CorruptDataException("Comprimento de segmento APP0 inválido (< 2).");
+                        }
+                        int payload = len - 2;
+                        byte[] app0Data = new byte[payload];
+                        int bytesRead = 0;
+                        while (bytesRead < payload)
+                        {
+                            int r = inputStream.Read(app0Data, bytesRead, payload - bytesRead);
+                            if (r <= 0) throw new CorruptDataException("Fim prematuro de fluxo ao ler cabeçalho APP0.");
+                            bytesRead += r;
+                        }
+
+                        // Identificador JFIF (5 bytes: 'J','F','I','F',0)
+                        if (payload >= 14 &&
+                            app0Data[0] == 0x4A && app0Data[1] == 0x46 &&
+                            app0Data[2] == 0x49 && app0Data[3] == 0x46 &&
+                            app0Data[4] == 0x00)
+                        {
+                            int major = app0Data[5];
+                            int minor = app0Data[6];
+                            int densityUnits = app0Data[7];
+                            int xDensity = (app0Data[8] << 8) | app0Data[9];
+                            int yDensity = (app0Data[10] << 8) | app0Data[11];
+
+                            inspection.Metadata["JfifVersion"] = string.Format("{0}.{1:D2}", major, minor);
+                            string unitStr = "None (Aspect Ratio)";
+                            if (densityUnits == 1) unitStr = "DPI (dots per inch)";
+                            else if (densityUnits == 2) unitStr = "DPC (dots per cm)";
+                            inspection.Metadata["DensityUnits"] = unitStr;
+                            inspection.Metadata["XDensity"] = xDensity.ToString();
+                            inspection.Metadata["YDensity"] = yDensity.ToString();
+                        }
+                    }
                     else if (marker == JpegMarker.SOF1 || marker == JpegMarker.SOF2 || marker == JpegMarker.SOF3 ||
-                             marker == JpegMarker.SOF9 || marker == JpegMarker.SOF10)
+                             marker == JpegMarker.SOF5 || marker == JpegMarker.SOF6 || marker == JpegMarker.SOF7 ||
+                             marker == JpegMarker.SOF9 || marker == JpegMarker.SOF10 || marker == JpegMarker.SOF11 ||
+                             marker == JpegMarker.SOF13 || marker == JpegMarker.SOF14 || marker == JpegMarker.SOF15)
                     {
                         inspection.IsSupported = false;
+                        inspection.Metadata["Format"] = "Unsupported JPEG Profile (" + JpegMarker.GetName((ushort)marker) + ")";
                         inspection.Metadata["UnsupportedProfile"] = JpegMarker.GetName((ushort)marker);
                         done = true;
                     }
                     else if (JpegMarker.HasLength((ushort)marker))
                     {
                         int len = ReadBigEndian16(inputStream);
-                        if (len > 2)
+                        if (len < 2)
                         {
-                            if (inputStream.CanSeek) inputStream.Seek(len - 2, SeekOrigin.Current);
+                            throw new CorruptDataException("Comprimento de marcador JPEG inválido (< 2).");
+                        }
+                        int skipBytes = len - 2;
+                        if (skipBytes > 0)
+                        {
+                            if (inputStream.CanSeek)
+                            {
+                                inputStream.Seek(skipBytes, SeekOrigin.Current);
+                            }
                             else
                             {
-                                for (int i = 0; i < len - 2; i++) inputStream.ReadByte();
+                                for (int i = 0; i < skipBytes; i++)
+                                {
+                                    if (inputStream.ReadByte() < 0)
+                                    {
+                                        throw new CorruptDataException("Fim de fluxo ao pular segmento de marcador.");
+                                    }
+                                }
                             }
                         }
                     }
