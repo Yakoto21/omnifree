@@ -91,7 +91,7 @@ namespace Lodino.Core.Safety
         public const int MinAudioSampleRate = 8000;
         public const int MaxAudioSampleRate = 192000;
         public const long MaxAudioFrames = 100 * 1000 * 1000; // 100 milhões de frames (~35 min a 48 kHz stereo)
-        public const long MaxSingleChunkSize = 64 * 1024 * 1024; // 64 MB por chunk RIFF
+        public const long MaxSingleChunkSize = 64 * 1024 * 1024; // 64 MB por chunk auxiliar RIFF (não aplicável ao chunk 'data')
         public const long MaxAuxiliaryHeaderBytes = 16 * 1024 * 1024; // 16 MB acumulados de chunks auxiliares antes do data
         public const long MaxAudioMemoryBytes = 400 * 1024 * 1024; // 400 MB de armazenamento em memória descompactada (canais * frames * sizeof(int))
 
@@ -130,7 +130,7 @@ namespace Lodino.Core.Safety
                     frameCount, MaxAudioFrames));
             }
 
-            long memoryBytes = (long)channels * frameCount * sizeof(int);
+            long memoryBytes = checked((long)channels * frameCount * sizeof(int));
             if (memoryBytes > MaxAudioMemoryBytes)
             {
                 throw new ResourceLimitException(string.Format(

@@ -262,6 +262,11 @@ namespace Lodino.Tests
             RunTest("HARDENING WAV: Detecção de truncamento de chunk auxiliar em stream não-seekable (D-WAV-04)", Test_Wav_Hardening_NonSeekable_PrematureEof_InAuxiliaryChunk);
             RunTest("HARDENING WAV: Validação rigorosa de cabeçalho WAVE_FORMAT_EXTENSIBLE (D-WAV-05)", Test_Wav_Hardening_ExtensibleHeader_Validation);
             RunTest("HARDENING WAV: Teto de segurança para memória do buffer de áudio (400 MB)", Test_Wav_Hardening_MaxAudioMemoryBytes_Ceiling);
+            RunTest("HARDENING WAV: Aceitação de chunk 'data' legítimo de 70 MB sem falsos positivos (D-WAV-07)", Test_Wav_ChunkData_Over64MB_Accepted);
+            RunTest("HARDENING WAV: Suporte a áudio realista de 10 min 44.1kHz 16-bit (~101 MB) (D-WAV-07)", Test_Wav_RealisticDuration_10Min_Over64MB_Accepted);
+            RunTest("HARDENING WAV: Suporte a perfil estúdio 96kHz 24-bit 2 min (~66 MB) (D-WAV-07)", Test_Wav_StudioProfile_96kHz_24Bit_Over64MB_Accepted);
+            RunTest("HARDENING WAV: Rejeição de chunk 'data' > 500 MB antes da alocação (D-WAV-07)", Test_Wav_Security_ChunkData_ExceedsMaxAudioFileSize_Rejection);
+            RunTest("HARDENING WAV: Rejeição de chunk 'data' com tamanho desalinhado de BlockAlign (D-WAV-07)", Test_Wav_Security_ChunkData_MisalignedBlockAlign_Rejection);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -2235,6 +2240,70 @@ namespace Lodino.Tests
 
             public override void Flush() { }
             public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
+            public override void SetLength(long value) { throw new NotSupportedException(); }
+            public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+        }
+
+        private class VirtualAudioStream : Stream
+        {
+            private readonly byte[] _headerBytes;
+            private readonly long _totalLength;
+            private long _position;
+
+            public VirtualAudioStream(byte[] headerBytes, long totalLength)
+            {
+                _headerBytes = headerBytes;
+                _totalLength = totalLength;
+                _position = 0;
+            }
+
+            public override bool CanRead { get { return true; } }
+            public override bool CanSeek { get { return true; } }
+            public override bool CanWrite { get { return false; } }
+            public override long Length { get { return _totalLength; } }
+            public override long Position
+            {
+                get { return _position; }
+                set { _position = value; }
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (_position >= _totalLength) return 0;
+                int bytesRead = 0;
+                if (_position < _headerBytes.Length)
+                {
+                    int headerAvailable = (int)Math.Min((long)count, _headerBytes.Length - _position);
+                    Buffer.BlockCopy(_headerBytes, (int)_position, buffer, offset, headerAvailable);
+                    _position += headerAvailable;
+                    offset += headerAvailable;
+                    count -= headerAvailable;
+                    bytesRead += headerAvailable;
+                }
+
+                if (count > 0 && _position < _totalLength)
+                {
+                    int virtualAvailable = (int)Math.Min((long)count, _totalLength - _position);
+                    Array.Clear(buffer, offset, virtualAvailable);
+                    _position += virtualAvailable;
+                    bytesRead += virtualAvailable;
+                }
+
+                return bytesRead;
+            }
+
+            public override long Seek(long offset, SeekOrigin origin)
+            {
+                switch (origin)
+                {
+                    case SeekOrigin.Begin: _position = offset; break;
+                    case SeekOrigin.Current: _position += offset; break;
+                    case SeekOrigin.End: _position = _totalLength + offset; break;
+                }
+                return _position;
+            }
+
+            public override void Flush() { }
             public override void SetLength(long value) { throw new NotSupportedException(); }
             public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
         }
@@ -5770,6 +5839,213 @@ namespace Lodino.Tests
                 }
             }
             Assert(threwMem, "Deve rejeitar buffers cujo consumo de memória estimada exceda MaxAudioMemoryBytes (400 MB)");
+        }
+
+        private static void Test_Wav_ChunkData_Over64MB_Accepted()
+        {
+            // Valida que um arquivo WAV com chunk 'data' de 70 MB (superior a 64 MB) é lido sem erro (D-WAV-07)
+            long dataSize = 70L * 1024 * 1024;
+            long riffSize = dataSize + 36;
+            byte[] headerBytes;
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)riffSize);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)2);                      // Stereo
+                w.Write((uint)44100);
+                w.Write((uint)176400);                   // ByteRate
+                w.Write((ushort)4);                      // BlockAlign
+                w.Write((ushort)16);                     // 16 bits
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)dataSize);
+                headerBytes = ms.ToArray();
+            }
+
+            using (var stream = new VirtualAudioStream(headerBytes, riffSize + 8))
+            {
+                var header = WavHeader.Read(stream);
+                AssertEqual(dataSize, (long)header.DataSize, "DataSize");
+                AssertEqual(2, (int)header.Channels, "Channels");
+                AssertEqual(16, (int)header.BitsPerSample, "BitsPerSample");
+                AssertEqual(dataSize / 4, header.FrameCount, "FrameCount");
+            }
+        }
+
+        private static void Test_Wav_RealisticDuration_10Min_Over64MB_Accepted()
+        {
+            // Valida áudio realista de 10 minutos (44.1 kHz, 16-bit estéreo ~101 MB) (D-WAV-07)
+            long frameCount = 10L * 60 * 44100; // 26.460.000 quadros
+            int blockAlign = 4; // 2 canais * 2 bytes
+            long dataSize = frameCount * blockAlign; // 105.840.000 bytes (~100.94 MB)
+            long riffSize = dataSize + 36;
+
+            byte[] headerBytes;
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)riffSize);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)2);                      // Stereo
+                w.Write((uint)44100);
+                w.Write((uint)176400);                   // ByteRate
+                w.Write((ushort)blockAlign);
+                w.Write((ushort)16);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)dataSize);
+                headerBytes = ms.ToArray();
+            }
+
+            using (var stream = new VirtualAudioStream(headerBytes, riffSize + 8))
+            {
+                var header = WavHeader.Read(stream);
+                AssertEqual(dataSize, (long)header.DataSize, "DataSize");
+                AssertEqual(frameCount, header.FrameCount, "FrameCount");
+                Assert(Math.Abs(header.DurationSeconds - 600.0) < 0.001, "Duração deve ser 600 segundos (10 min)");
+            }
+        }
+
+        private static void Test_Wav_StudioProfile_96kHz_24Bit_Over64MB_Accepted()
+        {
+            // Perfil de estúdio: 2 minutos a 96 kHz, 24-bit estéreo (BlockAlign = 6, ~66 MB) (D-WAV-07)
+            long frameCount = 2L * 60 * 96000; // 11.520.000 quadros
+            int blockAlign = 6; // 2 canais * 3 bytes
+            long dataSize = frameCount * blockAlign; // 69.120.000 bytes (~65.92 MB)
+            long riffSize = dataSize + 36;
+
+            byte[] headerBytes;
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)riffSize);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)2);
+                w.Write((uint)96000);
+                w.Write((uint)(96000 * 6));
+                w.Write((ushort)blockAlign);
+                w.Write((ushort)24);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)dataSize);
+                headerBytes = ms.ToArray();
+            }
+
+            using (var stream = new VirtualAudioStream(headerBytes, riffSize + 8))
+            {
+                var header = WavHeader.Read(stream);
+                AssertEqual(dataSize, (long)header.DataSize, "DataSize");
+                AssertEqual(frameCount, header.FrameCount, "FrameCount");
+                Assert(Math.Abs(header.DurationSeconds - 120.0) < 0.001, "Duração deve ser 120 segundos (2 min)");
+            }
+        }
+
+        private static void Test_Wav_Security_ChunkData_ExceedsMaxAudioFileSize_Rejection()
+        {
+            // Chunk data com 501 MB (> DefaultMaxAudioFileSize = 500 MB) deve ser rejeitado (D-WAV-07)
+            long dataSize = 501L * 1024 * 1024;
+            long riffSize = dataSize + 36;
+
+            byte[] headerBytes;
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)riffSize);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)2);
+                w.Write((uint)44100);
+                w.Write((uint)176400);
+                w.Write((ushort)4);
+                w.Write((ushort)16);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)dataSize);
+                headerBytes = ms.ToArray();
+            }
+
+            using (var stream = new VirtualAudioStream(headerBytes, riffSize + 8))
+            {
+                bool threwLimit = false;
+                try
+                {
+                    WavHeader.Read(stream);
+                }
+                catch (ResourceLimitException ex)
+                {
+                    if (ex.Message.Contains("excede o limite máximo permitido"))
+                    {
+                        threwLimit = true;
+                    }
+                }
+                Assert(threwLimit, "Deve rejeitar chunk 'data' > 500 MB com ResourceLimitException (D-WAV-07)");
+            }
+        }
+
+        private static void Test_Wav_Security_ChunkData_MisalignedBlockAlign_Rejection()
+        {
+            // Chunk data com tamanho não divisível por BlockAlign (ex: 70 MB + 1 byte com BlockAlign = 4)
+            long dataSize = (70L * 1024 * 1024) + 1; // não alinhado
+            long riffSize = dataSize + 36;
+
+            byte[] headerBytes;
+            using (var ms = new MemoryStream())
+            {
+                var w = new BinaryWriter(ms, Encoding.ASCII);
+                w.Write(WavHeader.FourCcRiff);
+                w.Write((uint)riffSize);
+                w.Write(WavHeader.FourCcWave);
+
+                w.Write(WavHeader.FourCcFmt);
+                w.Write((uint)16);
+                w.Write(WavHeader.WaveFormatPcm);
+                w.Write((ushort)2);
+                w.Write((uint)44100);
+                w.Write((uint)176400);
+                w.Write((ushort)4); // BlockAlign = 4
+                w.Write((ushort)16);
+
+                w.Write(WavHeader.FourCcData);
+                w.Write((uint)dataSize);
+                headerBytes = ms.ToArray();
+            }
+
+            using (var stream = new VirtualAudioStream(headerBytes, riffSize + 8))
+            {
+                bool threwAlign = false;
+                try
+                {
+                    WavHeader.Read(stream);
+                }
+                catch (CorruptDataException ex)
+                {
+                    if (ex.Message.Contains("não é múltiplo inteiro do alinhamento de bloco"))
+                    {
+                        threwAlign = true;
+                    }
+                }
+                Assert(threwAlign, "Deve rejeitar chunk 'data' desalinhado com CorruptDataException (D-WAV-07)");
+            }
         }
 
         #endregion

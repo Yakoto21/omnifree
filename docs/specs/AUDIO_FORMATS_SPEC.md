@@ -67,11 +67,15 @@ Arquivos WAV gravados por estações de áudio modernas (DAWs) frequentemente ut
   2. O campo `wValidBitsPerSample` não pode exceder `wBitsPerSample`. Se `validBits > BitsPerSample`, o cabeçalho é rejeitado como corrompido.
   3. Se o GUID corresponder ao PCM, o formato é normalizado para PCM canônico.
 
-### 2.4 Chunk Obrigatório de Amostras (`"data"`)
+### 2.4 Chunk Obrigatório de Amostras (`"data"`) e Hardening D-WAV-07
 Identificador: `"data"` (`0x61746164`).
 - `ChunkSize`: Comprimento total em bytes dos dados de áudio brutos.
 - Contagem total de quadros de amostra: $\text{FrameCount} = \frac{\text{ChunkSize}}{\text{BlockAlign}}$.
 - Duração em segundos: $\text{Duration} = \frac{\text{FrameCount}}{\text{SampleRate}}$.
+- **Diferenciação Semântica de Limites (D-WAV-07):** O limite `MaxSingleChunkSize` (64 MB) aplica-se estritamente aos blocos auxiliares de metadados, nunca ao bloco primário de áudio `"data"`. O chunk de áudio é delimitado por:
+  1. `SecurityLimits.DefaultMaxAudioFileSize` (500 MB) para tamanho em disco / container RIFF.
+  2. `SecurityLimits.MaxAudioMemoryBytes` (400 MB) para expansão descompactada em memória RAM (`canais * quadros * sizeof(int)`), validado preventivamente antes de qualquer alocação.
+- **Validação de Alinhamento de Quadros:** O tamanho em bytes do chunk `"data"` deve ser um múltiplo exato do alinhamento de bloco (`DataSize % BlockAlign == 0`). Se houver bytes residuais ou incompletos, o arquivo é imediatamente rejeitado com `CorruptDataException`.
 
 ### 2.5 Tratamento de Chunks Auxiliares e Hardening D-WAV-04
 Chunks como `"LIST"`, `"JUNK"`, `"bext"`, `"id3 "` ou metadados informativos são saltados de maneira segura e indexados no dicionário de metadados da inspeção (`FormatInspection.Metadata`).

@@ -67,6 +67,13 @@ namespace Lodino.Core.Formats.Audio.Wav
             }
 
             header.RiffSize = reader.ReadUInt32();
+            if (header.RiffSize > SecurityLimits.DefaultMaxAudioFileSize)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Tamanho declarado do container RIFF ({0:N0} bytes) excede o limite máximo permitido de {1:N0} bytes.",
+                    header.RiffSize, SecurityLimits.DefaultMaxAudioFileSize));
+            }
+
             uint wave = reader.ReadUInt32();
             if (wave != FourCcWave)
             {
@@ -102,10 +109,10 @@ namespace Lodino.Core.Formats.Audio.Wav
 
                 string chunkIdStr = Encoding.ASCII.GetString(BitConverter.GetBytes(chunkId));
 
-                if (chunkSize > SecurityLimits.MaxSingleChunkSize)
+                if (chunkId != FourCcData && chunkSize > SecurityLimits.MaxSingleChunkSize)
                 {
                     throw new ResourceLimitException(string.Format(
-                        "Tamanho do chunk '{0}' ({1:N0} bytes) excede o limite máximo permitido de {2:N0} bytes.",
+                        "Tamanho do chunk auxiliar '{0}' ({1:N0} bytes) excede o limite máximo permitido de {2:N0} bytes.",
                         chunkIdStr, chunkSize, SecurityLimits.MaxSingleChunkSize));
                 }
 
@@ -197,6 +204,13 @@ namespace Lodino.Core.Formats.Audio.Wav
                     if (!foundFmt)
                     {
                         throw new CorruptDataException("Chunk 'data' encontrado antes do chunk 'fmt '.");
+                    }
+
+                    if (chunkSize > SecurityLimits.DefaultMaxAudioFileSize)
+                    {
+                        throw new ResourceLimitException(string.Format(
+                            "Tamanho do chunk 'data' ({0:N0} bytes) excede o limite máximo permitido de {1:N0} bytes.",
+                            chunkSize, SecurityLimits.DefaultMaxAudioFileSize));
                     }
 
                     header.DataSize = chunkSize;
@@ -326,6 +340,20 @@ namespace Lodino.Core.Formats.Audio.Wav
             if (DataSize < 0)
             {
                 throw new CorruptDataException("Tamanho do chunk 'data' é negativo.");
+            }
+
+            if (DataSize > SecurityLimits.DefaultMaxAudioFileSize)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Tamanho do chunk 'data' ({0:N0} bytes) excede o limite máximo permitido de {1:N0} bytes.",
+                    DataSize, SecurityLimits.DefaultMaxAudioFileSize));
+            }
+
+            if (BlockAlign > 0 && (DataSize % BlockAlign) != 0)
+            {
+                throw new CorruptDataException(string.Format(
+                    "Tamanho do chunk 'data' ({0} bytes) não é múltiplo inteiro do alinhamento de bloco (BlockAlign = {1} bytes).",
+                    DataSize, BlockAlign));
             }
 
             // Se o tamanho do stream for conhecido, validar se não ultrapassa o arquivo
