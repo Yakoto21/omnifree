@@ -40,6 +40,29 @@ namespace Lodino.Desktop
             get { return Path.GetFileName(SourcePath); }
         }
 
+        public string OperationDescription
+        {
+            get
+            {
+                string tgt = (TargetFormat ?? "").ToLowerInvariant();
+                string src = (SourceFormat ?? "").ToLowerInvariant();
+
+                if (tgt == "extract" || tgt == "ungz" || tgt == "decompress" || tgt == "dir" || tgt == "folder")
+                {
+                    return "EXTRAIR";
+                }
+                if (tgt == "zip")
+                {
+                    return src == "zip" ? "VERIFICAR ZIP" : "COMPACTAR (ZIP)";
+                }
+                if (tgt == "gz" || tgt == "gzip")
+                {
+                    return (src == "gz" || src == "gzip") ? "RECOMPRIMIR (GZ)" : "COMPACTAR (GZ)";
+                }
+                return "CONVERTER -> " + tgt.ToUpperInvariant();
+            }
+        }
+
         public ConversionJob(int id, string sourcePath, string targetFormat)
         {
             Id = id;
@@ -82,7 +105,7 @@ namespace Lodino.Desktop
                 case JobStatus.Failed: statusStr = "Falha"; break;
                 case JobStatus.Cancelled: statusStr = "Cancelado"; break;
             }
-            return string.Format("{0} -> {1} [{2}]", FileName, TargetFormat.ToUpperInvariant(), statusStr);
+            return string.Format("{0} [{1}] — {2}", FileName, OperationDescription, statusStr);
         }
     }
 }

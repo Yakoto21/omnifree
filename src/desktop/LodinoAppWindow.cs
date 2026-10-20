@@ -145,6 +145,11 @@ namespace Lodino.Desktop
 
             IntPtr hInstance = Marshal.GetHINSTANCE(typeof(LodinoAppWindow).Module);
             IntPtr hCursor = NativeMethods.LoadCursor(IntPtr.Zero, NativeMethods.IDC_ARROW);
+            IntPtr hIcon = NativeMethods.LoadIcon(hInstance, (IntPtr)1);
+            if (hIcon == IntPtr.Zero)
+            {
+                hIcon = NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
+            }
 
             var wc = new NativeMethods.WNDCLASSEX();
             wc.cbSize = (uint)Marshal.SizeOf(typeof(NativeMethods.WNDCLASSEX));
@@ -153,12 +158,12 @@ namespace Lodino.Desktop
             wc.cbClsExtra = 0;
             wc.cbWndExtra = 0;
             wc.hInstance = hInstance;
-            wc.hIcon = IntPtr.Zero;
+            wc.hIcon = hIcon;
             wc.hCursor = hCursor;
             wc.hbrBackground = NativeMethods.CreateSolidBrush(NativeMethods.RGB(28, 31, 34)); // Fundo grafite escuro #1C1F22
             wc.lpszMenuName = null;
             wc.lpszClassName = WindowClassName;
-            wc.hIconSm = IntPtr.Zero;
+            wc.hIconSm = hIcon;
 
             NativeMethods.RegisterClassEx(ref wc);
         }
@@ -237,6 +242,13 @@ namespace Lodino.Desktop
             _hWnd = hWnd;
             IntPtr hInstance = Marshal.GetHINSTANCE(typeof(LodinoAppWindow).Module);
 
+            IntPtr hAppIcon = NativeMethods.LoadIcon(hInstance, (IntPtr)1);
+            if (hAppIcon != IntPtr.Zero)
+            {
+                NativeMethods.SendMessage(hWnd, NativeMethods.WM_SETICON, (IntPtr)NativeMethods.ICON_SMALL, hAppIcon);
+                NativeMethods.SendMessage(hWnd, NativeMethods.WM_SETICON, (IntPtr)NativeMethods.ICON_BIG, hAppIcon);
+            }
+
             // Cria fontes Segoe UI limpas
             _hFontNormal = NativeMethods.CreateFont(-13, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 2, 0, "Segoe UI");
             _hFontBold   = NativeMethods.CreateFont(-13, 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 2, 0, "Segoe UI");
@@ -291,15 +303,17 @@ namespace Lodino.Desktop
             NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.WM_SETFONT, _hFontBold, (IntPtr)1);
 
             // Popula os formatos disponíveis no núcleo nativo
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "PNG (Imagem Lossless)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "JPG (JPEG Fotográfico)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "BMP (Bitmap Windows)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "JSON (Dados Estruturados)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "CSV (Planilha / Tabela)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "INI (Configuração)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "WAV (Áudio PCM Sem Perdas)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "ZIP (Arquivo Compactado)");
-            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "GZ (Compressão GZIP RFC 1952)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "(Auto / Sugerido por Arquivo)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Converter para PNG (Imagem Lossless)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Converter para JPG (JPEG Fotográfico)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Converter para BMP (Bitmap Windows)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Converter para JSON (Dados Estruturados)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Converter para CSV (Planilha / Tabela)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Converter para INI (Configuração)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Processar Áudio WAV (PCM / DSP)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Compactar em ZIP (Arquivo .zip)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Compactar em GZIP (Arquivo .gz)");
+            NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_ADDSTRING, IntPtr.Zero, "Extrair Contêiner (Descompactar ZIP / GZ)");
             NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_SETCURSEL, (IntPtr)0, IntPtr.Zero);
 
             _hLblOutDir = CreateControl("STATIC", "Pasta de Destino:",
@@ -713,16 +727,18 @@ namespace Lodino.Desktop
             int sel = (int)NativeMethods.SendMessage(_hCmbTargetFormat, NativeMethods.CB_GETCURSEL, IntPtr.Zero, IntPtr.Zero);
             switch (sel)
             {
-                case 0: return "png";
-                case 1: return "jpg";
-                case 2: return "bmp";
-                case 3: return "json";
-                case 4: return "csv";
-                case 5: return "ini";
-                case 6: return "wav";
-                case 7: return "zip";
-                case 8: return "gz";
-                default: return "png";
+                case 0: return "auto";
+                case 1: return "png";
+                case 2: return "jpg";
+                case 3: return "bmp";
+                case 4: return "json";
+                case 5: return "csv";
+                case 6: return "ini";
+                case 7: return "wav";
+                case 8: return "zip";
+                case 9: return "gz";
+                case 10: return "extract";
+                default: return "auto";
             }
         }
 

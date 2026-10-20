@@ -366,6 +366,18 @@ namespace Lodino.Tests
             RunTest("GZIP: Enumeração completa de múltiplos membros concatenados via InspectAllMembers (E-04)", Test_Gzip_Inspect_All_Members);
             RunTest("GZIP: Conformidade normativa RFC 1952 § 2.3.1 com codificação Latin-1 em FNAME (A-01)", Test_Gzip_Normative_Latin1_Fname);
 
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE DESKTOP — ORQUESTRAÇÃO DE FILA   ");
+            Console.WriteLine("  Módulo: Fila e Preservação Operacional (14.1)  ");
+            Console.WriteLine("=================================================");
+
+            RunTest("FILA (Auto): Sugestão inteligente de operação por formato de entrada", Test_Queue_Auto_Suggested_Operations);
+            RunTest("FILA (Override Seguro): Bloqueio de sobrescrita incompatível em fila mista", Test_Queue_Preserve_On_Incompatible_Override);
+            RunTest("FILA (Extração): Aplicação explícita de extração para contêineres ZIP e GZIP", Test_Queue_Explicit_Extract_Override);
+            RunTest("FILA (Compactação): Aplicação de compactação ZIP em fila", Test_Queue_Explicit_Zip_Override);
+            RunTest("FILA (Robustez): Rejeição graciosa de formato desconhecido sem corromper entrada", Test_Queue_Invalid_Extension_Graceful_Failure);
+            RunTest("FILA (End-to-End): Execução de lote misto com dados, imagem e contêiner", Test_Queue_Mixed_EndToEnd_Execution);
+
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
             Console.WriteLine("-------------------------------------------------");
@@ -8199,6 +8211,295 @@ namespace Lodino.Tests
         #endregion
 
         #endregion
+
+        #endregion
+
+        #region Testes da Fila e GUI (Fase 14.1)
+
+        private static void Test_Queue_Auto_Suggested_Operations()
+        {
+            var mgr = new Lodino.Desktop.ConversionManager();
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_queue_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string fCsv = Path.Combine(tempDir, "dados.csv");
+                string fBmp = Path.Combine(tempDir, "foto.bmp");
+                string fPng = Path.Combine(tempDir, "imagem.png");
+                string fJpg = Path.Combine(tempDir, "foto.jpg");
+                string fIni = Path.Combine(tempDir, "config.ini");
+                string fWav = Path.Combine(tempDir, "audio.wav");
+                string fZip = Path.Combine(tempDir, "pacote.zip");
+                string fGz  = Path.Combine(tempDir, "arquivo.gz");
+
+                File.WriteAllText(fCsv, "a,b\n1,2");
+                File.WriteAllBytes(fBmp, new byte[100]);
+                File.WriteAllBytes(fPng, new byte[100]);
+                File.WriteAllBytes(fJpg, new byte[100]);
+                File.WriteAllText(fIni, "[Sec]\nk=v");
+                File.WriteAllBytes(fWav, new byte[100]);
+                File.WriteAllBytes(fZip, new byte[100]);
+                File.WriteAllBytes(fGz,  new byte[100]);
+
+                mgr.AddFile(fCsv, "auto");
+                mgr.AddFile(fBmp, "auto");
+                mgr.AddFile(fPng, "auto");
+                mgr.AddFile(fJpg, "auto");
+                mgr.AddFile(fIni, "auto");
+                mgr.AddFile(fWav, "auto");
+                mgr.AddFile(fZip, "auto");
+                mgr.AddFile(fGz,  "auto");
+
+                var jobs = mgr.Jobs;
+                AssertEqual(8, jobs.Count, "8 trabalhos adicionados na fila");
+
+                AssertEqual("json", jobs[0].TargetFormat, "CSV sugerido -> JSON");
+                AssertEqual("CONVERTER -> JSON", jobs[0].OperationDescription, "CSV operação");
+
+                AssertEqual("png", jobs[1].TargetFormat, "BMP sugerido -> PNG");
+                AssertEqual("CONVERTER -> PNG", jobs[1].OperationDescription, "BMP operação");
+
+                AssertEqual("jpg", jobs[2].TargetFormat, "PNG sugerido -> JPG");
+                AssertEqual("CONVERTER -> JPG", jobs[2].OperationDescription, "PNG operação");
+
+                AssertEqual("png", jobs[3].TargetFormat, "JPG sugerido -> PNG");
+                AssertEqual("CONVERTER -> PNG", jobs[3].OperationDescription, "JPG operação");
+
+                AssertEqual("json", jobs[4].TargetFormat, "INI sugerido -> JSON");
+                AssertEqual("CONVERTER -> JSON", jobs[4].OperationDescription, "INI operação");
+
+                AssertEqual("wav", jobs[5].TargetFormat, "WAV sugerido -> WAV");
+                AssertEqual("CONVERTER -> WAV", jobs[5].OperationDescription, "WAV operação");
+
+                AssertEqual("extract", jobs[6].TargetFormat, "ZIP sugerido -> EXTRACT");
+                AssertEqual("EXTRAIR", jobs[6].OperationDescription, "ZIP operação");
+
+                AssertEqual("extract", jobs[7].TargetFormat, "GZ sugerido -> EXTRACT");
+                AssertEqual("EXTRAIR", jobs[7].OperationDescription, "GZ operação");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Queue_Preserve_On_Incompatible_Override()
+        {
+            var mgr = new Lodino.Desktop.ConversionManager();
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_override_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string fBmp = Path.Combine(tempDir, "imagem.bmp");
+                string fCsv = Path.Combine(tempDir, "tabela.csv");
+                string fZip = Path.Combine(tempDir, "dados.zip");
+                string fWav = Path.Combine(tempDir, "som.wav");
+
+                File.WriteAllBytes(fBmp, new byte[100]);
+                File.WriteAllText(fCsv, "col1,col2\n1,2");
+                File.WriteAllBytes(fZip, new byte[100]);
+                File.WriteAllBytes(fWav, new byte[100]);
+
+                mgr.AddFile(fBmp); // target -> png
+                mgr.AddFile(fCsv); // target -> json
+                mgr.AddFile(fZip); // target -> extract
+                mgr.AddFile(fWav); // target -> wav
+
+                // Tenta forçar override "png" em toda a fila
+                mgr.StartBatch("png", tempDir);
+                var jobs = mgr.Jobs;
+
+                // BMP deve aceitar PNG
+                AssertEqual("png", jobs[0].TargetFormat, "BMP foi convertido para PNG");
+
+                // CSV NÃO deve ser corrompido para PNG; mantém JSON
+                AssertEqual("json", jobs[1].TargetFormat, "CSV preservou JSON e rejeitou PNG");
+
+                // ZIP NÃO deve ser corrompido para PNG; mantém EXTRACT
+                AssertEqual("extract", jobs[2].TargetFormat, "ZIP preservou EXTRACT e rejeitou PNG");
+
+                // WAV NÃO deve ser corrompido para PNG; mantém WAV
+                AssertEqual("wav", jobs[3].TargetFormat, "WAV preservou WAV e rejeitou PNG");
+            }
+            finally
+            {
+                mgr.Cancel();
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Queue_Explicit_Extract_Override()
+        {
+            var mgr = new Lodino.Desktop.ConversionManager();
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_extract_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string fZip = Path.Combine(tempDir, "arquivo.zip");
+                string fGz  = Path.Combine(tempDir, "arquivo.gz");
+                string fBmp = Path.Combine(tempDir, "foto.bmp");
+
+                File.WriteAllBytes(fZip, new byte[100]);
+                File.WriteAllBytes(fGz,  new byte[100]);
+                File.WriteAllBytes(fBmp, new byte[100]);
+
+                mgr.AddFile(fZip);
+                mgr.AddFile(fGz);
+                mgr.AddFile(fBmp);
+
+                // Aplica override "extract"
+                mgr.StartBatch("extract", tempDir);
+                var jobs = mgr.Jobs;
+
+                AssertEqual("extract", jobs[0].TargetFormat, "ZIP recebeu EXTRACT");
+                AssertEqual("extract", jobs[1].TargetFormat, "GZ recebeu EXTRACT");
+                // BMP não suporta extract; deve manter sua conversão padrão (png)
+                AssertEqual("png", jobs[2].TargetFormat, "BMP preservou PNG e rejeitou EXTRACT");
+            }
+            finally
+            {
+                mgr.Cancel();
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Queue_Explicit_Zip_Override()
+        {
+            var mgr = new Lodino.Desktop.ConversionManager();
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_zip_override_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string fCsv = Path.Combine(tempDir, "relatorio.csv");
+                string fTxt = Path.Combine(tempDir, "nota.txt");
+
+                File.WriteAllText(fCsv, "x,y\n10,20");
+                File.WriteAllText(fTxt, "texto simples");
+
+                mgr.AddFile(fCsv);
+                mgr.AddFile(fTxt);
+
+                // Aplica override "zip"
+                mgr.StartBatch("zip", tempDir);
+                var jobs = mgr.Jobs;
+
+                AssertEqual("zip", jobs[0].TargetFormat, "CSV recebeu alvo ZIP");
+                AssertEqual("COMPACTAR (ZIP)", jobs[0].OperationDescription, "CSV com operação de compactação ZIP");
+
+                AssertEqual("zip", jobs[1].TargetFormat, "TXT recebeu alvo ZIP");
+                AssertEqual("COMPACTAR (ZIP)", jobs[1].OperationDescription, "TXT com operação de compactação ZIP");
+            }
+            finally
+            {
+                mgr.Cancel();
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Queue_Invalid_Extension_Graceful_Failure()
+        {
+            var mgr = new Lodino.Desktop.ConversionManager();
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_invalid_ext_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string fUnknown = Path.Combine(tempDir, "arquivo.desconhecido");
+                File.WriteAllText(fUnknown, "conteudo original preservado");
+
+                var job = mgr.AddFile(fUnknown);
+                Assert(job != null, "Trabalho adicionado à fila");
+                // Força um formato alvo inexistente que nenhum motor suporta
+                job.TargetFormat = "formato_impossivel";
+
+                // Executa o processamento direto
+                mgr.ProcessBatchSynchronously(null, tempDir);
+
+                AssertEqual(Lodino.Desktop.JobStatus.Failed, job.Status, "Status deve ser Failed");
+                Assert(job.ErrorMessage != null && job.ErrorMessage.Length > 0, "Mensagem de erro deve ser preenchida");
+                Assert(File.Exists(fUnknown), "Arquivo original deve ser preservado intacto");
+                AssertEqual("conteudo original preservado", File.ReadAllText(fUnknown), "Conteúdo original inalterado");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Queue_Mixed_EndToEnd_Execution()
+        {
+            var mgr = new Lodino.Desktop.ConversionManager();
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_mixed_e2e_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                // 1. Arquivo CSV
+                string fCsv = Path.Combine(tempDir, "dados.csv");
+                File.WriteAllText(fCsv, "nome,nota\nAntigravity,10\nLodino,10");
+
+                // 2. Arquivo BMP 4x4
+                string fBmp = Path.Combine(tempDir, "imagem.bmp");
+                var bmpEngine = new Lodino.Core.Formats.Image.BmpEngine();
+                using (var fs = File.Create(fBmp))
+                {
+                    var pb = new Lodino.Core.Formats.Image.PixelBuffer(4, 4);
+                    for (int y = 0; y < 4; y++)
+                        for (int x = 0; x < 4; x++)
+                            pb.SetPixel(x, y, new Lodino.Core.Formats.Image.PixelColor(0, 128, 255));
+                    var rawBmp = Lodino.Core.Formats.Image.BmpEncoder.Encode(pb, 24);
+                    fs.Write(rawBmp, 0, rawBmp.Length);
+                }
+
+                // 3. Arquivo ZIP com um item dentro
+                string fZip = Path.Combine(tempDir, "pacote.zip");
+                using (var zw = new Lodino.Core.Formats.Archive.Zip.ZipWriter(fZip))
+                {
+                    zw.AddEntry("interior.txt", System.Text.Encoding.UTF8.GetBytes("conteudo extraido do zip"));
+                    zw.Finish();
+                }
+
+                // Adiciona os 3 à fila no modo auto
+                mgr.AddFile(fCsv, "auto");
+                mgr.AddFile(fBmp, "auto");
+                mgr.AddFile(fZip, "auto");
+
+                string outDir = Path.Combine(tempDir, "saida");
+                Directory.CreateDirectory(outDir);
+
+                // Executa o lote de forma síncrona
+                mgr.ProcessBatchSynchronously("auto", outDir);
+
+                var jobs = mgr.Jobs;
+                AssertEqual(3, jobs.Count, "3 trabalhos no lote");
+                AssertEqual(Lodino.Desktop.JobStatus.Completed, jobs[0].Status, "CSV -> JSON concluído com sucesso");
+                AssertEqual(Lodino.Desktop.JobStatus.Completed, jobs[1].Status, "BMP -> PNG concluído com sucesso");
+                AssertEqual(Lodino.Desktop.JobStatus.Completed, jobs[2].Status, "ZIP -> EXTRACT concluído com sucesso");
+
+                // Valida saídas
+                string outJson = jobs[0].DestinationPath;
+                Assert(File.Exists(outJson), "Arquivo JSON gerado existe");
+                string jsonText = File.ReadAllText(outJson);
+                Assert(jsonText.Contains("Antigravity"), "JSON contém conteúdo convertido do CSV");
+
+                string outPng = jobs[1].DestinationPath;
+                Assert(File.Exists(outPng), "Arquivo PNG gerado existe");
+                byte[] pngBytes = File.ReadAllBytes(outPng);
+                Assert(pngBytes.Length > 8 && pngBytes[0] == 0x89 && pngBytes[1] == 0x50, "PNG possui assinatura mágica válida");
+
+                string extractedFile = Path.Combine(outDir, "interior.txt");
+                Assert(File.Exists(extractedFile), "Arquivo descompactado do ZIP existe");
+                AssertEqual("conteudo extraido do zip", File.ReadAllText(extractedFile), "Conteúdo extraído do ZIP correto");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
 
         #endregion
     }
