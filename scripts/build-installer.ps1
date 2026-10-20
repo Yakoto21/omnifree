@@ -1,5 +1,5 @@
 # ==============================================================================
-# LODINO NATIVE SUITE -- BUILD DO INSTALADOR INNO SETUP
+# LODINO NATIVE SUITE -- BUILD DO INSTALADOR NSIS (Nullsoft Scriptable Install System)
 # ==============================================================================
 param(
     [string]$Version = "1.0.0-rc.2",
@@ -12,59 +12,72 @@ Set-Location $rootDir
 
 Write-Host "=================================================" -ForegroundColor Cyan
 Write-Host "  LODINO NATIVE SUITE -- COMPILADOR DE INSTALADOR" -ForegroundColor Cyan
-Write-Host "  Versao: $Version                               " -ForegroundColor Cyan
+Write-Host "  Ferramenta: NSIS 3 (makensis.exe)              " -ForegroundColor Cyan
+Write-Host "  Versao Alvo: $Version                          " -ForegroundColor Cyan
 Write-Host "=================================================" -ForegroundColor Cyan
 
-# 1. Inspecao Exaustiva do Compilador Inno Setup (ISCC.exe)
-Write-Host "`n[1/3] Verificando presenca do compilador Inno Setup (ISCC.exe)..." -ForegroundColor Yellow
+# 1. Inspecao Exaustiva do Compilador NSIS (makensis.exe)
+Write-Host "`n[1/3] Verificando presenca do compilador NSIS (makensis.exe)..." -ForegroundColor Yellow
 
-$isccCandidates = @(
-    "ISCC.exe",
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
-    "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles(x86)}\Inno Setup 5\ISCC.exe",
-    "${env:ProgramFiles}\Inno Setup 5\ISCC.exe",
-    "C:\tools\InnoSetup\ISCC.exe",
-    "C:\ProgramData\chocolatey\bin\ISCC.exe"
+$makensisCandidates = @(
+    "makensis.exe",
+    "${env:ProgramFiles(x86)}\NSIS\Bin\makensis.exe",
+    "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+    "${env:ProgramFiles}\NSIS\Bin\makensis.exe",
+    "${env:ProgramFiles}\NSIS\makensis.exe",
+    "${env:LOCALAPPDATA}\Programs\NSIS\makensis.exe",
+    "C:\tools\nsis\makensis.exe",
+    "C:\ProgramData\chocolatey\bin\makensis.exe"
 )
 
-$isccPath = $null
+$makensisPath = $null
 
 # Checar PATH primeiro
-$pathCmd = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+$pathCmd = Get-Command "makensis.exe" -ErrorAction SilentlyContinue
 if ($pathCmd) {
-    $isccPath = $pathCmd.Source
+    $makensisPath = $pathCmd.Source
 } else {
-    foreach ($candidate in $isccCandidates) {
+    foreach ($candidate in $makensisCandidates) {
         if ($candidate -and (Test-Path $candidate)) {
-            $isccPath = $candidate
+            $makensisPath = $candidate
             break
         }
     }
 }
 
-if (-not $isccPath) {
-    Write-Host "`n[STATUS: BLOCKED] Compilador Inno Setup (ISCC.exe) nao foi detectado no host." -ForegroundColor Red
+if (-not $makensisPath) {
+    Write-Host "`n[STATUS: BLOCKED] Compilador NSIS (makensis.exe) nao foi detectado no host." -ForegroundColor Red
     Write-Host "Caminhos verificados:" -ForegroundColor DarkGray
-    foreach ($candidate in $isccCandidates) {
+    foreach ($candidate in $makensisCandidates) {
         Write-Host "  - $candidate" -ForegroundColor DarkGray
     }
     Write-Host "`nRequisito Mandatorio:" -ForegroundColor Yellow
-    Write-Host "  - Inno Setup 6.2 ou superior (https://jrsoftware.org/isdl.php)" -ForegroundColor White
+    Write-Host "  - NSIS 3.10 ou 3.13 (https://nsis.sourceforge.io/Download)" -ForegroundColor White
+    Write-Host "  - Alternativa winget: winget install --id NSIS.NSIS -e" -ForegroundColor White
     Write-Host "  - Regra de Politica: Instalacao silenciosa de terceiros nao e permitida." -ForegroundColor White
-    Write-Host "  - A especificacao 'installer\lodino_setup.iss' esta pronta para compilacao assim que a ferramenta estiver presente." -ForegroundColor Green
+    Write-Host "  - A especificacao 'installer\lodino_setup.nsi' esta pronta para compilacao assim que a ferramenta estiver presente." -ForegroundColor Green
     
     if ($CheckOnly) {
-        return @{ Status = "BLOCKED"; Reason = "ISCC not found" }
+        return @{ Status = "BLOCKED"; Reason = "makensis not found" }
     }
     exit 2
 }
 
-Write-Host "Compilador detectado: $isccPath" -ForegroundColor Green
+# Detectar versao do makensis
+$detectedVersion = "Desconhecida"
+try {
+    $verOutput = & "$makensisPath" /VERSION 2>&1
+    if ($verOutput) {
+        $detectedVersion = $verOutput.ToString().Trim()
+    }
+} catch {
+    # Ignora falha de deteccao de versao
+}
+
+Write-Host "Compilador detectado: $makensisPath (Versao: $detectedVersion)" -ForegroundColor Green
 
 if ($CheckOnly) {
-    return @{ Status = "AVAILABLE"; Path = $isccPath }
+    return @{ Status = "AVAILABLE"; Path = $makensisPath; Version = $detectedVersion }
 }
 
 # 2. Verificacao dos Artefatos de Staging
@@ -90,14 +103,19 @@ foreach ($rf in $requiredFiles) {
 }
 Write-Host "Todos os 7 artefatos mandatorios presentes no staging." -ForegroundColor Green
 
-# 3. Compilacao do Instalador
-Write-Host "`n[3/3] Compilando instalador Inno Setup..." -ForegroundColor Yellow
-$issPath = Join-Path $rootDir "installer\lodino_setup.iss"
+# 3. Compilacao do Instalador via NSIS
+Write-Host "`n[3/3] Compilando instalador NSIS..." -ForegroundColor Yellow
+$nsiPath = Join-Path $rootDir "installer\lodino_setup.nsi"
 
-& "$isccPath" "/DMyAppVersion=$Version" "/DSourceDir=$stagingDir" "$issPath"
+if (-not (Test-Path $nsiPath)) {
+    Write-Error "Arquivo de especificacao NSIS nao encontrado: $nsiPath"
+    exit 1
+}
+
+& "$makensisPath" "/DPRODUCT_VERSION=$Version" "/DSOURCE_DIR=$stagingDir" "$nsiPath"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Falha na compilacao do instalador pelo ISCC. Codigo de saida: $LASTEXITCODE"
+    Write-Error "Falha na compilacao do instalador pelo NSIS (makensis.exe). Codigo de saida: $LASTEXITCODE"
     exit $LASTEXITCODE
 }
 
@@ -108,7 +126,7 @@ if (Test-Path $installerExe) {
     $hash = (Get-FileHash -Path $installerExe -Algorithm SHA256).Hash.ToLowerInvariant()
     $size = (Get-Item $installerExe).Length
     Write-Host "`n=================================================" -ForegroundColor Green
-    Write-Host "  INSTALADOR COMPILADO COM SUCESSO!" -ForegroundColor Green
+    Write-Host "  INSTALADOR NSIS COMPILADO COM SUCESSO!" -ForegroundColor Green
     Write-Host "  Arquivo: $installerExe" -ForegroundColor Green
     Write-Host "  Tamanho: $size bytes" -ForegroundColor Green
     Write-Host "  SHA256:  $hash" -ForegroundColor Green

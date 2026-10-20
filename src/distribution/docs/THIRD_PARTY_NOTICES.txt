@@ -36,6 +36,16 @@ públicos e normativos da indústria:
 9. ZIP: "APPNOTE.TXT — .ZIP File Format Specification"
    (PKWARE Inc., Versão 6.3.9).
 
+10. Windows Installer (NSIS):
+    O instalador distribuível para Windows é gerado utilizando o Nullsoft Scriptable
+    Install System (NSIS), versão 3 (compatível com NSIS 3.10 / 3.13).
+    Copyright © 1999-2026 Contribuidores do NSIS.
+    O runtime stub do executável do instalador e o motor de compilação são distribuídos
+    sob os termos da licença permissiva zlib/libpng.
+    O instalador utiliza exclusivamente o módulo nativo de compressão zlib (licenciado sob a licença zlib).
+    O uso do NSIS não sujeita o código do Lodino a restrições copyleft e autoriza
+    a livre distribuição comercial e não comercial sem custos de royalties ou taxas de runtime.
+
 Aviso de Isenção:
 Marcas registradas, formatos e nomes de padrões pertencem aos seus respectivos
 detentores e são citados aqui exclusivamente para fins de interoperabilidade e

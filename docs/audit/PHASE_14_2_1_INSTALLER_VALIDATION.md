@@ -58,10 +58,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -CheckOnly
 
 #### 2.1.2 Análise Legal dos Termos de Licença do Inno Setup
 Foi realizada uma análise jurídica e técnica da licença do Inno Setup (Jordan Russell / Martijn Laan):
-- **Modelo de Licenciamento:** O Inno Setup é distribuído sob uma licença de software livre permissiva do tipo BSD Modificada (Inno Setup License).
-- **Uso Não Comercial:** Totalmente livre de royalties, gratuito e irrestrito.
-- **Uso Comercial:** A licença oficial do Inno Setup permite expressamente o uso comercial gratuito para empacotar aplicações comerciais e não comerciais, sem obrigação de pagamento de royalties. O autor solicita e encoraja a aquisição de licenças comerciais voluntárias por empresas como forma de contribuição e suporte financeiro contínuo ao projeto, mas tal contribuição não constitui barreira legal ou ônus de licenciamento proprietário para a distribuição do instalador gerado.
-- **Compatibilidade com o Lodino (MIT License):** Plenamente compatível. O instalador gerado embute apenas o runtime stub do Inno Setup (código compilado C/Pascal do bootstrapper), o qual não impõe contaminação copyleft (não possui cláusulas GPL/AGPL).
+- **Modelo de Licenciamento:** O Inno Setup possui seu código sob a Inno Setup License (permissiva, estilo BSD Modificada). Contudo, a política comercial e a distribuição oficial em seu site (jrsoftware.org) requerem atenção especial para entidades comerciais.
+- **Uso Não Comercial:** Gratuito e sem royalties sob os termos da licença permissiva.
+- **Uso Comercial e Termos Oficiais:** O site oficial do Inno Setup (jrsoftware.org) solicita expressamente que usuários e organizações que utilizem a ferramenta em contexto comercial adquiram uma licença comercial paga (licença perpétua com 2 anos de atualizações, custando a partir de ~€145 para Single-User até €1.125 para Enterprise). Portanto, **não se deve afirmar que o uso comercial é irrestritamente gratuito**: há uma solicitação formal dos mantenedores para pagamento de licença comercial, o que acarreta custos de aquisição e possíveis custos recorrentes de renovação para organizações que desejam manter o compilador atualizado com suporte e novas versões.
+- **Compatibilidade com o Lodino (MIT License):** Tecnicamente compatível no aspecto de código (o stub gerado não impõe contaminação copyleft tipo GPL), porém o uso comercial institucional exige ponderação financeira e adesão ética ou contratual aos termos comerciais do mantenedor.
 - **Versão Requerida e Fonte Oficial:**
   - Versão mínima recomendada: **Inno Setup 6.2.0** ou superior (suporta sintaxe moderna de 64 bits e melhorias de segurança de desinstalação per-user).
   - Distribuição oficial e segura: [https://jrsoftware.org/isdl.php](https://jrsoftware.org/isdl.php).
