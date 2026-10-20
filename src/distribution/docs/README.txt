@@ -1,6 +1,6 @@
 ================================================================================
   LODINO NATIVE SUITE — CONVERSOR LOCAL E SOBERANO
-  Versão: 1.0.0-rc.1 (Release Candidate 1) — Edição Portátil para Windows x64
+  Versão: 1.0.0-rc.2 (Release Candidate 2) — Edição Portátil para Windows x64
 ================================================================================
 
 O Lodino é um conjunto de ferramentas nativas para Windows que oferece conversão,
@@ -9,8 +9,11 @@ contêineres de arquivo com código 100% proprietário, sem dependências de ter
 sem Electron e sem codecs externos.
 
 --------------------------------------------------------------------------------
-REQUISITOS DE SISTEMA
+REQUISITOS DE SISTEMA E ARTEFATOS
 --------------------------------------------------------------------------------
+- Pacote Oficial: Lodino-v1.0.0-rc.2-Portable-win-x64.zip
+- Integridade: Lodino-v1.0.0-rc.2-Portable-win-x64.zip.sha256
+- Manifesto: Lodino-v1.0.0-rc.2-Portable-win-x64-manifest.txt
 - Sistema Operacional: Windows 7 SP1, Windows 8.1, Windows 10 ou Windows 11 (64 bits).
 - Runtime: .NET Framework 4.0 ou superior (já vem pré-instalado de fábrica no
   Windows 8, 10 e 11).
@@ -78,6 +81,6 @@ SUPORTE E NOTAS DE SEGURANÇA
 - O Lodino não se comunica com a internet nem envia telemetria. Todo o processamento
   ocorre estritamente no seu computador.
 - Caso o Windows Defender SmartScreen apresente a tela azul "O Windows protegeu o
-  seu computador", isto ocorre porque os binários do Release Candidate ainda não
+  seu computador", isto ocorre porque os binários do Release Candidate 2 (RC2) ainda não
   possuem certificado de assinatura comercial de código pago. Clique em "Mais
   informações" e em seguida em "Executar assim mesmo".

@@ -1,7 +1,8 @@
 # Script de publicacao oficial do pacote portatil Release Candidate do Lodino Native Suite
 param(
-    [string]$Version = "1.0.0-rc.1",
-    [switch]$SkipTests = $false
+    [string]$Version = "1.0.0-rc.2",
+    [switch]$SkipTests = $false,
+    [string]$IssPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +15,7 @@ Write-Host "  Versao: $Version                               " -ForegroundColor 
 Write-Host "=================================================" -ForegroundColor Cyan
 
 # 1. Compilacao Release com Testes de Aceitacao
-Write-Host "`n[1/5] Compilando assemblies de producao em modo Release..." -ForegroundColor Yellow
+Write-Host "`n[1/6] Compilando assemblies de producao em modo Release..." -ForegroundColor Yellow
 $buildScript = Join-Path $PSScriptRoot "build-core.ps1"
 
 if ($SkipTests) {
@@ -36,7 +37,7 @@ $zipFile = Join-Path $distDir ($packageBaseName + ".zip")
 $sha256File = Join-Path $distDir ($packageBaseName + ".zip.sha256")
 $manifestFile = Join-Path $distDir ($packageBaseName + "-manifest.txt")
 
-Write-Host "`n[2/5] Preparando diretorio de montagem isolado em $stagingDir..." -ForegroundColor Yellow
+Write-Host "`n[2/6] Preparando diretorio de montagem isolado em $stagingDir..." -ForegroundColor Yellow
 if (-not (Test-Path $distDir)) {
     New-Item -ItemType Directory -Path $distDir | Out-Null
 }
@@ -46,7 +47,7 @@ if (Test-Path $stagingDir) {
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
 # 3. Copia EXCLUSIVA dos Binarios de Producao e Documentacao
-Write-Host "`n[3/5] Copiando binarios de producao e documentacao para o pacote..." -ForegroundColor Yellow
+Write-Host "`n[3/6] Copiando binarios de producao e documentacao para o pacote..." -ForegroundColor Yellow
 $buildDir = Join-Path $rootDir "build"
 $requiredBinaries = @("Lodino.Core.dll", "Lodino.exe", "Lodino.App.exe")
 
@@ -77,7 +78,7 @@ foreach ($doc in $docFiles) {
 }
 
 # 4. Geracao do Arquivo ZIP Portatil
-Write-Host "`n[4/5] Empacotando arquivo ZIP portatil: $zipFile..." -ForegroundColor Yellow
+Write-Host "`n[4/6] Empacotando arquivo ZIP portatil: $zipFile..." -ForegroundColor Yellow
 if (Test-Path $zipFile) {
     Remove-Item -Path $zipFile -Force
 }
@@ -95,7 +96,7 @@ $zipMsg = "  -> ZIP gerado com sucesso! Tamanho total: {0} bytes" -f $zipLength
 Write-Host $zipMsg -ForegroundColor Green
 
 # 5. Calculo do Hash SHA-256 e Geracao do Manifesto
-Write-Host "`n[5/5] Calculando checksum SHA-256 e gerando manifesto de integridade..." -ForegroundColor Yellow
+Write-Host "`n[5/6] Calculando checksum SHA-256 e gerando manifesto de integridade..." -ForegroundColor Yellow
 $hash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLowerInvariant()
 $shaLine = "{0} *{1}.zip" -f $hash, $packageBaseName
 Set-Content -Path $sha256File -Value $shaLine
@@ -126,8 +127,69 @@ $manifestLines.Add("Zero dependencias externas, zero PDBs, zero testes no pacote
 
 Set-Content -Path $manifestFile -Value ($manifestLines -join "`r`n")
 
+# 6. Integracao Opcional com Inno Setup (ISCC.exe)
+Write-Host "`n[6/6] Verificando compilador de instalador Inno Setup (ISCC.exe)..." -ForegroundColor Yellow
+
+$installerScript = Join-Path $PSScriptRoot "build-installer.ps1"
+if (Test-Path $installerScript) {
+    $checkResult = & $installerScript -Version $Version -CheckOnly
+    if ($checkResult -and $checkResult.Status -eq "AVAILABLE") {
+        Write-Host "  ISCC detectado em $($checkResult.Path). Compilando instalador..." -ForegroundColor Cyan
+        & $installerScript -Version $Version
+    } else {
+        Write-Host "  [AVISO TRANSPARENTE] ISCC.exe (Inno Setup) nao detectado no ambiente." -ForegroundColor Yellow
+        Write-Host "  A especificacao 'installer\lodino_setup.iss' esta homologada para compilacao assim que a ferramenta estiver presente." -ForegroundColor Yellow
+        Write-Host "  O pacote portatil .zip (zero-install) foi gerado com sucesso e e 100% autonomo." -ForegroundColor Yellow
+    }
+} else {
+    $isccCandidates = @()
+    $isccCmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
+    if ($isccCmd) { $isccCandidates += $isccCmd.Source }
+
+    $stdPaths = @(
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles} "Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 5\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles} "Inno Setup 5\ISCC.exe"),
+        (Join-Path ${env:LocalAppData} "Programs\Inno Setup 6\ISCC.exe")
+    )
+    $isccCandidates += $stdPaths
+
+    $isccExe = $isccCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+    $issCandidates = @()
+    if ($IssPath) { $issCandidates += $IssPath }
+    $issCandidates += @(
+        (Join-Path $rootDir "installer\lodino_setup.iss"),
+        (Join-Path $rootDir "src\distribution\installer\lodino_setup.iss"),
+        (Join-Path $rootDir "installer\lodino.iss"),
+        (Join-Path $rootDir "src\distribution\lodino.iss")
+    )
+    $resolvedIss = $issCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+    if ($isccExe -and $resolvedIss) {
+        Write-Host "  ISCC detectado: $isccExe" -ForegroundColor Cyan
+        Write-Host "  Script .iss encontrado: $resolvedIss" -ForegroundColor Cyan
+        Write-Host "  Compilando instalador oficial executavel..." -ForegroundColor Yellow
+        
+        $isccArgs = @("/DMyAppVersion=$Version", "/O$distDir", $resolvedIss)
+        & $isccExe $isccArgs
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  -> Instalador executavel compilado com sucesso em $distDir!" -ForegroundColor Green
+        } else {
+            Write-Warning "Compilacao do Inno Setup falhou com codigo $LASTEXITCODE. O pacote portatil .zip permanece integro."
+        }
+    } elseif (-not $isccExe) {
+        Write-Host "  [AVISO TRANSPARENTE] ISCC.exe (Inno Setup) nao detectado no ambiente." -ForegroundColor Yellow
+        Write-Host "  O pacote portatil .zip (zero-install) foi gerado com sucesso e e 100% autonomo." -ForegroundColor Yellow
+    } else {
+        Write-Host "  [AVISO TRANSPARENTE] Script Inno Setup (.iss) nao encontrado nos caminhos padrao." -ForegroundColor Yellow
+        Write-Host "  O pacote portatil .zip (zero-install) foi gerado com sucesso e e 100% autonomo." -ForegroundColor Yellow
+    }
+}
+
 Write-Host "`n=================================================" -ForegroundColor Green
-Write-Host "  PACOTE PORTATIL RC1 PUBLICADO COM SUCESSO!     " -ForegroundColor Green
+Write-Host "  PACOTE PORTATIL $Version PUBLICADO COM SUCESSO!  " -ForegroundColor Green
 Write-Host "  Arquivo: $zipFile" -ForegroundColor Green
 Write-Host "  SHA256:  $hash" -ForegroundColor Green
 Write-Host "=================================================" -ForegroundColor Green
