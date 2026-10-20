@@ -1,0 +1,8 @@
+id,name,role,salary,notes
+1,Alice,Lead Engineer,120000,"Especialista em C# e C++"
+2,Bob,QA Lead,95000,"Testes de conformidade, automação"
+3,Charlie,"Senior Architect, Core",110000,"Foco em baixo nível"
+4,Diana,Security Reviewer,105000,"Análise de vulnerabilidades
+Trabalho remoto
+Certificada CISSP"
+5,Elena,Specialist,98000,"Uso de aspas ""escapadas"" com sucesso"

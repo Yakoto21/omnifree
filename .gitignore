@@ -6,3 +6,8 @@ out/
 *.log
 Thumbs.db
 Desktop.ini
+build/*.dll
+build/*.exe
+build/*.pdb
+build/*.obj
+build/*.ilk
