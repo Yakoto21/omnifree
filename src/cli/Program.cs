@@ -256,6 +256,159 @@ namespace Lodino.Cli
                     }
                     return 0;
                 }
+                else if (command == "gzip" && args.Length >= 2)
+                {
+                    string input = args[1];
+                    if (Directory.Exists(input))
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("Erro: O comando gzip comprime arquivos individuais. Para pastas, utilize o comando 'zip'.");
+                        Console.ResetColor();
+                        return 1;
+                    }
+
+                    if (!File.Exists(input))
+                    {
+                        Console.WriteLine("Arquivo não encontrado: " + input);
+                        return 1;
+                    }
+
+                    string outputGz = null;
+                    var level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Optimal;
+
+                    for (int i = 2; i < args.Length; i++)
+                    {
+                        if (args[i] == "-o" && i + 1 < args.Length)
+                        {
+                            outputGz = args[++i];
+                        }
+                        else if (args[i].StartsWith("--output=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            outputGz = args[i].Substring("--output=".Length);
+                        }
+                        else if (args[i] == "--fast" || args[i] == "-1")
+                        {
+                            level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Fast;
+                        }
+                        else if (args[i] == "--best" || args[i] == "--optimal" || args[i] == "-9")
+                        {
+                            level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Optimal;
+                        }
+                        else if (args[i] == "--store" || args[i] == "-0")
+                        {
+                            level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Store;
+                        }
+                        else if (args[i].StartsWith("--compression=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string val = args[i].Substring("--compression=".Length).ToLowerInvariant();
+                            if (val == "store" || val == "none" || val == "0") level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Store;
+                            else if (val == "fast" || val == "1") level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Fast;
+                            else level = Lodino.Core.Formats.Archive.Zip.ZipCompressionLevel.Optimal;
+                        }
+                        else if (!args[i].StartsWith("-") && string.IsNullOrEmpty(outputGz))
+                        {
+                            outputGz = args[i];
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(outputGz))
+                    {
+                        outputGz = input + ".gz";
+                    }
+
+                    var options = new Lodino.Core.Formats.Archive.Gzip.GzipWriteOptions
+                    {
+                        FileName = Path.GetFileName(input),
+                        CompressionLevel = level,
+                        ModificationTime = File.GetLastWriteTimeUtc(input)
+                    };
+
+                    Console.WriteLine(string.Format("Compactando GZIP '{0}' -> '{1}' ({2})...", input, outputGz, level));
+                    Lodino.Core.Formats.Archive.Gzip.GzipWriter.CompressFile(
+                        input,
+                        outputGz,
+                        options,
+                        overwrite: true,
+                        onProgress: pct => Console.Write(string.Format("\rProgresso: {0}%", pct)));
+
+                    Console.WriteLine(string.Format("\nArquivo GZIP criado com sucesso: {0} ({1:N0} bytes)",
+                        Path.GetFullPath(outputGz), new FileInfo(outputGz).Length));
+                    return 0;
+                }
+                else if (command == "gunzip" && args.Length >= 2)
+                {
+                    string gzFile = args[1];
+                    if (!File.Exists(gzFile))
+                    {
+                        Console.WriteLine("Arquivo GZIP não encontrado: " + gzFile);
+                        return 1;
+                    }
+
+                    string destFile = null;
+                    for (int i = 2; i < args.Length; i++)
+                    {
+                        if (args[i] == "-o" && i + 1 < args.Length)
+                        {
+                            destFile = args[++i];
+                        }
+                        else if (args[i].StartsWith("--output=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            destFile = args[i].Substring("--output=".Length);
+                        }
+                        else if (!args[i].StartsWith("-") && string.IsNullOrEmpty(destFile))
+                        {
+                            destFile = args[i];
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(destFile))
+                    {
+                        string baseName = Path.GetFileName(gzFile);
+                        if (baseName.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+                            destFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(gzFile)), baseName.Substring(0, baseName.Length - 3));
+                        else if (baseName.EndsWith(".gzip", StringComparison.OrdinalIgnoreCase))
+                            destFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(gzFile)), baseName.Substring(0, baseName.Length - 5));
+                        else
+                            destFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(gzFile)), baseName + ".out");
+                    }
+
+                    Console.WriteLine(string.Format("Descompactando GZIP '{0}' -> '{1}'...", gzFile, destFile));
+                    Lodino.Core.Formats.Archive.Gzip.GzipReader.DecompressFile(
+                        gzFile,
+                        destFile,
+                        overwrite: true,
+                        onProgress: pct => Console.Write(string.Format("\rProgresso: {0}%", pct)));
+
+                    Console.WriteLine(string.Format("\nDescompactação concluída com sucesso: {0} ({1:N0} bytes)",
+                        Path.GetFullPath(destFile), new FileInfo(destFile).Length));
+                    return 0;
+                }
+                else if (command == "inspect-gzip" && args.Length >= 2)
+                {
+                    string gzFile = args[1];
+                    if (!File.Exists(gzFile))
+                    {
+                        Console.WriteLine("Arquivo GZIP não encontrado: " + gzFile);
+                        return 1;
+                    }
+
+                    using (var fs = File.OpenRead(gzFile))
+                    {
+                        var engine = new Lodino.Core.Formats.Archive.Gzip.GzipEngine();
+                        var info = engine.Inspect(fs, gzFile);
+
+                        Console.WriteLine("========================================");
+                        Console.WriteLine("  INSPEÇÃO GZIP — LODINO NATIVE (RFC 1952)");
+                        Console.WriteLine("========================================");
+                        Console.WriteLine(string.Format("Caminho: {0}", Path.GetFullPath(gzFile)));
+                        Console.WriteLine(string.Format("Tamanho Comprimido: {0:N0} bytes", info.FileSizeBytes));
+                        foreach (var kvp in info.Metadata)
+                        {
+                            Console.WriteLine(string.Format("{0}: {1}", kvp.Key, kvp.Value));
+                        }
+                    }
+                    return 0;
+                }
                 else
                 {
                     Console.WriteLine("Comando inválido ou argumentos insuficientes.");
@@ -277,6 +430,9 @@ namespace Lodino.Cli
             Console.WriteLine("Uso do Lodino Native CLI:");
             Console.WriteLine("  Lodino.exe convert <caminho_entrada> <formato_destino> [pasta_destino] [--chave=valor ...]");
             Console.WriteLine("  Lodino.exe inspect <caminho_arquivo>");
+            Console.WriteLine("  Lodino.exe gzip <arquivo> [caminho_gz] [--compression=store|fast|optimal] [--fast|--best]");
+            Console.WriteLine("  Lodino.exe gunzip <arquivo_gz> [caminho_destino]");
+            Console.WriteLine("  Lodino.exe inspect-gzip <arquivo_gz>");
             Console.WriteLine("  Lodino.exe zip <pasta_ou_arquivo> [caminho_zip] [--compression=store|fast|optimal]");
             Console.WriteLine("  Lodino.exe unzip <arquivo_zip> [pasta_destino]");
             Console.WriteLine("  Lodino.exe list-zip <arquivo_zip>");
@@ -284,6 +440,9 @@ namespace Lodino.Cli
             Console.WriteLine("\nExemplos:");
             Console.WriteLine("  Lodino.exe convert dados.csv json");
             Console.WriteLine("  Lodino.exe convert arquivo.zip extract .\\pasta_extraida");
+            Console.WriteLine("  Lodino.exe gzip documento.txt documento.txt.gz --best");
+            Console.WriteLine("  Lodino.exe gunzip documento.txt.gz");
+            Console.WriteLine("  Lodino.exe inspect-gzip documento.txt.gz");
             Console.WriteLine("  Lodino.exe zip .\\minha_pasta backup.zip --compression=optimal");
             Console.WriteLine("  Lodino.exe unzip backup.zip .\\saida");
             Console.WriteLine("  Lodino.exe list-zip backup.zip");

@@ -13,6 +13,7 @@ namespace Lodino.Core.Formats.Image.Png
         private readonly Stream _stream;
         private ulong _bitBuffer;
         private int _bitsCount;
+        private long _bytesConsumed;
 
         public DeflateBitReader(Stream stream)
         {
@@ -20,6 +21,22 @@ namespace Lodino.Core.Formats.Image.Png
             _stream = stream;
             _bitBuffer = 0;
             _bitsCount = 0;
+            _bytesConsumed = 0;
+        }
+
+        public Stream BaseStream
+        {
+            get { return _stream; }
+        }
+
+        public long BytesConsumed
+        {
+            get { return _bytesConsumed; }
+        }
+
+        public int BitsRemainingInByte
+        {
+            get { return _bitsCount % 8; }
         }
 
         public int ReadBits(int count)
@@ -37,6 +54,7 @@ namespace Lodino.Core.Formats.Image.Png
                 {
                     throw new CorruptDataException("Fim inesperado do fluxo de dados DEFLATE ao ler bits.");
                 }
+                _bytesConsumed++;
                 _bitBuffer |= ((ulong)(byte)b) << _bitsCount;
                 _bitsCount += 8;
             }
@@ -62,6 +80,24 @@ namespace Lodino.Core.Formats.Image.Png
             }
         }
 
+        public int TryReadByte()
+        {
+            if (_bitsCount >= 8)
+            {
+                byte b = (byte)(_bitBuffer & 0xFF);
+                _bitBuffer >>= 8;
+                _bitsCount -= 8;
+                return (int)b;
+            }
+
+            int next = _stream.ReadByte();
+            if (next >= 0)
+            {
+                _bytesConsumed++;
+            }
+            return next;
+        }
+
         public byte ReadByte()
         {
             if (_bitsCount >= 8)
@@ -77,6 +113,7 @@ namespace Lodino.Core.Formats.Image.Png
             {
                 throw new CorruptDataException("Fim inesperado do fluxo DEFLATE ao ler byte alinhado.");
             }
+            _bytesConsumed++;
             return (byte)next;
         }
 
@@ -85,6 +122,15 @@ namespace Lodino.Core.Formats.Image.Png
             byte b0 = ReadByte();
             byte b1 = ReadByte();
             return (ushort)(b0 | (b1 << 8));
+        }
+
+        public uint ReadUInt32LittleEndian()
+        {
+            byte b0 = ReadByte();
+            byte b1 = ReadByte();
+            byte b2 = ReadByte();
+            byte b3 = ReadByte();
+            return (uint)(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24));
         }
 
         public void ReadBytes(byte[] buffer, int offset, int count)

@@ -58,6 +58,14 @@ namespace Lodino.Core.Formats.Image.Png
             if (outputStream == null) throw new ArgumentNullException("outputStream");
 
             var reader = new DeflateBitReader(inputStream);
+            Decompress(reader, outputStream, maxOutputBytes);
+        }
+
+        public static long Decompress(DeflateBitReader reader, Stream outputStream, long maxOutputBytes = SecurityLimits.DefaultMaxImageFileSize)
+        {
+            if (reader == null) throw new ArgumentNullException("reader");
+            if (outputStream == null) throw new ArgumentNullException("outputStream");
+
             byte[] history = new byte[32768];
             int historyPos = 0;
             long totalOutputBytes = 0;
@@ -95,6 +103,9 @@ namespace Lodino.Core.Formats.Image.Png
                 }
 
             } while (bfinal == 0);
+
+            reader.AlignToByte();
+            return totalOutputBytes;
         }
 
         private static void DecodeStoredBlock(

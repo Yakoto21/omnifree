@@ -182,5 +182,75 @@ namespace Lodino.Core.Safety
                     accumulatedBytes, MaxZipTotalExtractedBytes));
             }
         }
+
+        // ==========================================
+        // LIMITES DE SEGURANÇA PARA GZIP (RFC 1952)
+        // ==========================================
+        public const long DefaultMaxGzipInputFileSize = 500 * 1024 * 1024; // 500 MB
+        public const long DefaultMaxGzipExtractedBytes = 500 * 1024 * 1024; // 500 MB (consistente com ZIP)
+        public const int MaxGzipHeaderSize = 64 * 1024; // 64 KB (limite do cabeçalho incluindo FEXTRA, FNAME, FCOMMENT)
+        public const int MaxGzipFilenameLength = 4096; // 4 KB
+        public const int MaxGzipCommentLength = 4096; // 4 KB
+        public const int MaxGzipConcatenatedMembers = 1024; // 1024 membros por fluxo GZIP
+
+        public static void AssertGzipInputFileSize(long length, long maxBytes = DefaultMaxGzipInputFileSize)
+        {
+            if (length > maxBytes)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "O arquivo GZIP ({0:N0} bytes) excede o limite máximo de segurança permitido de {1:N0} bytes.",
+                    length, maxBytes));
+            }
+        }
+
+        public static void AssertGzipExtractedBytes(long accumulatedBytes, long maxBytes = DefaultMaxGzipExtractedBytes)
+        {
+            if (accumulatedBytes > maxBytes)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Total acumulado de bytes descompactados do GZIP ({0:N0} bytes) excede o teto de segurança contra Decompression Bomb de {1:N0} bytes.",
+                    accumulatedBytes, maxBytes));
+            }
+        }
+
+        public static void AssertGzipHeaderSize(int currentHeaderBytes)
+        {
+            if (currentHeaderBytes > MaxGzipHeaderSize)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Tamanho do cabeçalho GZIP ({0:N0} bytes) excede o teto de segurança permitido de {1:N0} bytes.",
+                    currentHeaderBytes, MaxGzipHeaderSize));
+            }
+        }
+
+        public static void AssertGzipFilenameLength(int length)
+        {
+            if (length > MaxGzipFilenameLength)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Comprimento do nome de arquivo GZIP (FNAME: {0:N0} bytes) excede o limite de segurança de {1:N0} bytes.",
+                    length, MaxGzipFilenameLength));
+            }
+        }
+
+        public static void AssertGzipCommentLength(int length)
+        {
+            if (length > MaxGzipCommentLength)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Comprimento do comentário GZIP (FCOMMENT: {0:N0} bytes) excede o limite de segurança de {1:N0} bytes.",
+                    length, MaxGzipCommentLength));
+            }
+        }
+
+        public static void AssertGzipMemberCount(int count)
+        {
+            if (count > MaxGzipConcatenatedMembers)
+            {
+                throw new ResourceLimitException(string.Format(
+                    "Número de membros GZIP concatenados ({0:N0}) excede o limite máximo de segurança de {1:N0} membros.",
+                    count, MaxGzipConcatenatedMembers));
+            }
+        }
     }
 }

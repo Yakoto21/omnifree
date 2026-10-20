@@ -13,6 +13,7 @@ using Lodino.Core.Formats.Image.Png;
 using Lodino.Core.IO;
 using Lodino.Core.Registry;
 using Lodino.Core.Safety;
+using Lodino.Core.Formats.Archive.Gzip;
 using Lodino.Core.Formats.Archive.Zip;
 using System.Threading;
 using Lodino.Desktop;
@@ -326,6 +327,32 @@ namespace Lodino.Tests
             RunTest("DYNAMIC DEFLATE: Árvore de distâncias vazia (bloco puramente literal sem correspondências LZ77)", Test_DynamicDeflate_EmptyDistanceTree_Compatibility);
             RunTest("DYNAMIC DEFLATE: Integração completa no ZipWriter e extração fiel no ZipReader", Test_DynamicDeflate_ZipWriter_Integration);
             RunTest("DYNAMIC DEFLATE (Segurança): Rejeição de HLIT > 286 e HDIST > 32 no decodificador", Test_DynamicDeflate_Decompressor_Guards_HlitHdist);
+
+            // =================================================
+            //   LODINO NATIVE CORE — MOTOR GZIP (FASE 13) 
+            //   Módulo: Compressor e Descompressor RFC 1952
+            // =================================================
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE CORE — MOTOR GZIP (FASE 13)      ");
+            Console.WriteLine("  Módulo: Compressor e Descompressor RFC 1952    ");
+            Console.WriteLine("=================================================\n");
+
+            RunTest("GZIP: Criação e leitura de arquivo vazio (0 bytes descomprimidos)", Test_Gzip_Empty_File);
+            RunTest("GZIP: Criação e leitura de arquivo de 1 byte", Test_Gzip_Single_Byte);
+            RunTest("GZIP: Round-trip de texto UTF-8 (64 bytes)", Test_Gzip_Small_Text);
+            RunTest("GZIP: Alta compressibilidade em dados repetitivos (64 KB)", Test_Gzip_Repetitive_Data);
+            RunTest("GZIP: Dados aleatórios de alta entropia (32 KB)", Test_Gzip_High_Entropy_Random);
+            RunTest("GZIP: Cabeçalho completo com campos opcionais (FNAME, FCOMMENT, FEXTRA, FHCRC)", Test_Gzip_Optional_Fields_Header);
+            RunTest("GZIP: Suporte a múltiplos membros concatenados (RFC 1952 § 2.2)", Test_Gzip_Concatenated_Members);
+            RunTest("GZIP (Segurança): Detecção e rejeição de CRC-32 adulterado no trailer", Test_Gzip_Security_Corrupt_Crc);
+            RunTest("GZIP (Segurança): Detecção e rejeição de ISIZE adulterado no trailer", Test_Gzip_Security_Corrupt_ISize);
+            RunTest("GZIP (Segurança): Rejeição de cabeçalho truncado ou bytes mágicos inválidos", Test_Gzip_Security_Truncated_Header);
+            RunTest("GZIP (Segurança): Rejeição de trailer truncado (< 8 bytes pós-DEFLATE)", Test_Gzip_Security_Truncated_Trailer);
+            RunTest("GZIP (Segurança): Rejeição estrita de flags reservadas (bits 5, 6, 7 do FLG != 0)", Test_Gzip_Security_Reserved_Flags);
+            RunTest("GZIP (Segurança): Rejeição de método de compressão não suportado (CM != 8)", Test_Gzip_Security_Unsupported_Method);
+            RunTest("GZIP (Segurança): Proteção contra Decompression Bomb (teto de bytes emitidos)", Test_Gzip_Security_Decompression_Bomb);
+            RunTest("GZIP (Engine): Inspeção completa e conversão ponta a ponta via EngineRegistry", Test_Gzip_Engine_Integration_And_Inspection);
+            RunTest("GZIP (Arquivo): Escrita atômica temporária e proteção contra sobrescrita indevida", Test_Gzip_File_Atomic_Overwrite_Protection);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -7490,6 +7517,428 @@ namespace Lodino.Tests
                 }
             }
             Assert(threwHlit, "HLIT > 286 deve lançar CorruptDataException no decodificador");
+        }
+
+        #endregion
+
+        #region Módulo: Motor GZIP (Fase 13)
+
+        private static void Test_Gzip_Empty_File()
+        {
+            byte[] input = new byte[0];
+            byte[] gz = GzipWriter.Compress(input);
+
+            Assert(gz != null && gz.Length >= 20, "GZIP de 0 bytes deve ter no mínimo 20 bytes (10 cabeçalho + 2 deflate + 8 trailer)");
+
+            byte[] outBytes = GzipReader.Decompress(gz);
+            Assert(outBytes != null && outBytes.Length == 0, "Saída descompactada de arquivo vazio deve conter exatamente 0 bytes");
+
+            using (var ms = new MemoryStream(gz))
+            {
+                var members = GzipReader.InspectMembers(ms);
+                Assert(members.Count == 1, "Arquivo GZIP vazio deve ter 1 membro");
+                Assert(members[0].Trailer.Crc32 == 0, "CRC-32 de arquivo vazio deve ser 0");
+                Assert(members[0].Trailer.ISize == 0, "ISIZE de arquivo vazio deve ser 0");
+            }
+        }
+
+        private static void Test_Gzip_Single_Byte()
+        {
+            byte[] input = new byte[] { 0x55 };
+            byte[] gz = GzipWriter.Compress(input);
+
+            byte[] outBytes = GzipReader.Decompress(gz);
+            Assert(outBytes != null && outBytes.Length == 1 && outBytes[0] == 0x55, "Saída descompactada de 1 byte deve coincidir perfeitamente");
+        }
+
+        private static void Test_Gzip_Small_Text()
+        {
+            string text = "Lodino: Motor GZIP RFC 1952 100% próprio em C# puro! Ação & café.";
+            byte[] input = Encoding.UTF8.GetBytes(text);
+            byte[] gz = GzipWriter.Compress(input);
+
+            byte[] outBytes = GzipReader.Decompress(gz);
+            string outText = Encoding.UTF8.GetString(outBytes);
+            Assert(outText == text, "Texto descompactado deve coincidir bit a bit com a entrada UTF-8 original");
+        }
+
+        private static void Test_Gzip_Repetitive_Data()
+        {
+            byte[] input = new byte[65536];
+            for (int i = 0; i < input.Length; i++)
+            {
+                input[i] = (byte)(i % 16);
+            }
+
+            byte[] gz = GzipWriter.Compress(input);
+            Assert(gz.Length < 1000, string.Format("Dados repetitivos de 64 KB devem comprimir para menos de 1000 bytes (obtido: {0})", gz.Length));
+
+            byte[] outBytes = GzipReader.Decompress(gz);
+            Assert(outBytes.Length == input.Length, "Tamanho dos dados descompactados deve ser 65.536 bytes");
+            for (int i = 0; i < input.Length; i++)
+            {
+                if (outBytes[i] != input[i])
+                {
+                    throw new Exception("Divergência de dados no índice " + i);
+                }
+            }
+        }
+
+        private static void Test_Gzip_High_Entropy_Random()
+        {
+            byte[] input = new byte[32768];
+            int seed = 1234567;
+            for (int i = 0; i < input.Length; i++)
+            {
+                seed = unchecked(seed * 1103515245 + 12345);
+                input[i] = (byte)((seed >> 16) & 0xFF);
+            }
+
+            byte[] gz = GzipWriter.Compress(input);
+            byte[] outBytes = GzipReader.Decompress(gz);
+
+            Assert(outBytes.Length == input.Length, "Tamanho dos dados descompactados de alta entropia deve coincidir");
+            for (int i = 0; i < input.Length; i++)
+            {
+                if (outBytes[i] != input[i])
+                {
+                    throw new Exception("Divergência de dados aleatórios no índice " + i);
+                }
+            }
+        }
+
+        private static void Test_Gzip_Optional_Fields_Header()
+        {
+            var opts = new GzipWriteOptions
+            {
+                FileName = "relatorio_teste.csv",
+                Comment = "Auditoria Fase 13 Lodino GZIP",
+                ExtraData = new byte[] { 0x4C, 0x44, 0x02, 0x00, 0xAA, 0xBB },
+                IncludeHeaderCrc = true,
+                IsText = true,
+                ModificationTime = new DateTime(2026, 10, 19, 21, 0, 0, DateTimeKind.Utc)
+            };
+
+            string rawText = "col1,col2\nval1,val2\n";
+            byte[] rawBytes = Encoding.UTF8.GetBytes(rawText);
+
+            byte[] gz = GzipWriter.Compress(rawBytes, opts);
+
+            using (var ms = new MemoryStream(gz))
+            {
+                var header = GzipHeader.Read(ms);
+                Assert(header.HasFileName, "Cabeçalho deve indicar presença de FNAME");
+                Assert(header.FileName == "relatorio_teste.csv", "Nome original do arquivo deve coincidir");
+                Assert(header.HasComment, "Cabeçalho deve indicar presença de FCOMMENT");
+                Assert(header.Comment == "Auditoria Fase 13 Lodino GZIP", "Comentário deve coincidir");
+                Assert(header.HasExtra, "Cabeçalho deve indicar presença de FEXTRA");
+                Assert(header.ExtraData != null && header.ExtraData.Length == 6, "FEXTRA deve ter 6 bytes");
+                Assert(header.HasHeaderCrc, "Cabeçalho deve indicar presença de FHCRC");
+                Assert(header.HeaderCrc.HasValue, "FHCRC deve ter valor válido calculado");
+                Assert(header.HasText, "Cabeçalho deve indicar flag FTEXT");
+                Assert(header.ModificationTime.HasValue, "MTIME deve ser válido");
+            }
+
+            byte[] outBytes = GzipReader.Decompress(gz);
+            Assert(Encoding.UTF8.GetString(outBytes) == rawText, "Dados descompactados com todos os campos opcionais devem coincidir");
+        }
+
+        private static void Test_Gzip_Concatenated_Members()
+        {
+            byte[] part1 = Encoding.UTF8.GetBytes("Membro 1 concatenado. ");
+            byte[] part2 = Encoding.UTF8.GetBytes("Membro 2 intermediario. ");
+            byte[] part3 = Encoding.UTF8.GetBytes("Membro 3 final.");
+
+            byte[] gz1 = GzipWriter.Compress(part1);
+            byte[] gz2 = GzipWriter.Compress(part2);
+            byte[] gz3 = GzipWriter.Compress(part3);
+
+            byte[] combinedGz = new byte[gz1.Length + gz2.Length + gz3.Length];
+            Buffer.BlockCopy(gz1, 0, combinedGz, 0, gz1.Length);
+            Buffer.BlockCopy(gz2, 0, combinedGz, gz1.Length, gz2.Length);
+            Buffer.BlockCopy(gz3, 0, combinedGz, gz1.Length + gz2.Length, gz3.Length);
+
+            using (var msIn = new MemoryStream(combinedGz))
+            using (var msOut = new MemoryStream())
+            {
+                var members = GzipReader.Decompress(msIn, msOut);
+                Assert(members.Count == 3, string.Format("Devem ser identificados exatamente 3 membros concatenados (obtido: {0})", members.Count));
+
+                string fullText = Encoding.UTF8.GetString(msOut.ToArray());
+                Assert(fullText == "Membro 1 concatenado. Membro 2 intermediario. Membro 3 final.", "Texto concatenado descompactado deve coincidir");
+            }
+        }
+
+        private static void Test_Gzip_Security_Corrupt_Crc()
+        {
+            byte[] raw = Encoding.UTF8.GetBytes("Verificação de integridade CRC-32");
+            byte[] gz = GzipWriter.Compress(raw);
+
+            // O trailer ocupa os 8 bytes finais: CRC32 (4 bytes) + ISIZE (4 bytes)
+            // Inverte um bit no byte do CRC32 (gz.Length - 8)
+            gz[gz.Length - 8] ^= 0x01;
+
+            bool threw = false;
+            try
+            {
+                GzipReader.Decompress(gz);
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("CRC-32"))
+                {
+                    threw = true;
+                }
+            }
+
+            Assert(threw, "CRC-32 adulterado no trailer GZIP deve lançar CorruptDataException");
+        }
+
+        private static void Test_Gzip_Security_Corrupt_ISize()
+        {
+            byte[] raw = Encoding.UTF8.GetBytes("Verificação de integridade ISIZE");
+            byte[] gz = GzipWriter.Compress(raw);
+
+            // Inverte um bit no primeiro byte do ISIZE (gz.Length - 4)
+            gz[gz.Length - 4] ^= 0x01;
+
+            bool threw = false;
+            try
+            {
+                GzipReader.Decompress(gz);
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("ISIZE"))
+                {
+                    threw = true;
+                }
+            }
+
+            Assert(threw, "ISIZE adulterado no trailer GZIP deve lançar CorruptDataException");
+        }
+
+        private static void Test_Gzip_Security_Truncated_Header()
+        {
+            byte[] raw = Encoding.UTF8.GetBytes("Teste de truncamento de cabeçalho");
+            byte[] gz = GzipWriter.Compress(raw);
+
+            byte[] truncated = new byte[4];
+            Buffer.BlockCopy(gz, 0, truncated, 0, 4);
+
+            bool threw = false;
+            try
+            {
+                GzipReader.Decompress(truncated);
+            }
+            catch (CorruptDataException)
+            {
+                threw = true;
+            }
+
+            Assert(threw, "Cabeçalho GZIP truncado deve lançar CorruptDataException");
+        }
+
+        private static void Test_Gzip_Security_Truncated_Trailer()
+        {
+            byte[] raw = Encoding.UTF8.GetBytes("Teste de truncamento de trailer");
+            byte[] gz = GzipWriter.Compress(raw);
+
+            // Remove 4 bytes do trailer (deixando apenas 4 dos 8 bytes)
+            byte[] truncated = new byte[gz.Length - 4];
+            Buffer.BlockCopy(gz, 0, truncated, 0, truncated.Length);
+
+            bool threw = false;
+            try
+            {
+                GzipReader.Decompress(truncated);
+            }
+            catch (CorruptDataException)
+            {
+                threw = true;
+            }
+
+            Assert(threw, "Trailer GZIP truncado deve lançar CorruptDataException");
+        }
+
+        private static void Test_Gzip_Security_Reserved_Flags()
+        {
+            byte[] raw = Encoding.UTF8.GetBytes("Teste de flags reservadas");
+            byte[] gz = GzipWriter.Compress(raw);
+
+            // Byte 3 é o campo FLG. Ativa o bit 5 (0x20)
+            gz[3] |= 0x20;
+
+            bool threw = false;
+            try
+            {
+                GzipReader.Decompress(gz);
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("Flags reservadas"))
+                {
+                    threw = true;
+                }
+            }
+
+            Assert(threw, "Flags reservadas ativas no cabeçalho GZIP devem lançar CorruptDataException");
+        }
+
+        private static void Test_Gzip_Security_Unsupported_Method()
+        {
+            byte[] raw = Encoding.UTF8.GetBytes("Teste de método de compressão");
+            byte[] gz = GzipWriter.Compress(raw);
+
+            // Byte 2 é CM. Altera de 8 (DEFLATE) para 9
+            gz[2] = 9;
+
+            bool threw = false;
+            try
+            {
+                GzipReader.Decompress(gz);
+            }
+            catch (UnsupportedFormatException ex)
+            {
+                if (ex.Message.Contains("não suportado"))
+                {
+                    threw = true;
+                }
+            }
+
+            Assert(threw, "Método de compressão diferente de 8 deve lançar UnsupportedFormatException");
+        }
+
+        private static void Test_Gzip_Security_Decompression_Bomb()
+        {
+            byte[] raw = new byte[50000];
+            for (int i = 0; i < raw.Length; i++) raw[i] = (byte)(i & 0xFF);
+            byte[] gz = GzipWriter.Compress(raw);
+
+            bool threw = false;
+            try
+            {
+                // Limita a descompressão a no máximo 1.000 bytes
+                GzipReader.Decompress(gz, maxOutputBytes: 1000);
+            }
+            catch (ResourceLimitException ex)
+            {
+                if (ex.Message.Contains("Decompression Bomb") || ex.Message.Contains("teto de segurança"))
+                {
+                    threw = true;
+                }
+            }
+
+            Assert(threw, "Emissão de bytes acima do teto maxOutputBytes deve lançar ResourceLimitException");
+        }
+
+        private static void Test_Gzip_Engine_Integration_And_Inspection()
+        {
+            var registry = EngineRegistry.Default;
+            var engineCompress = registry.Resolve("csv", "gz");
+            Assert(engineCompress != null && engineCompress.EngineId == "archive-gzip", "EngineRegistry deve resolver rota .csv -> .gz para archive-gzip");
+
+            var engineDecompress = registry.Resolve("gz", "csv");
+            Assert(engineDecompress != null && engineDecompress.EngineId == "archive-gzip", "EngineRegistry deve resolver rota .gz -> .csv para archive-gzip");
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_gzip_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string srcFile = Path.Combine(tempDir, "dados.csv");
+                File.WriteAllText(srcFile, "id,nome\n1,Alpha\n2,Beta\n", Encoding.UTF8);
+
+                // Conversão CSV -> GZ
+                var reqCompress = new ConvertRequest
+                {
+                    JobId = "test_gz_c",
+                    InputPath = srcFile,
+                    TargetFormat = "gz",
+                    OutputDirectory = tempDir
+                };
+
+                var resCompress = engineCompress.Convert(reqCompress, null);
+                Assert(resCompress.Status == "completed", "Conversão para .gz deve ter status completed");
+                Assert(File.Exists(resCompress.OutputPath), "Arquivo .gz deve ter sido criado no disco");
+
+                // Inspeção do arquivo .gz gerado
+                using (var fs = File.OpenRead(resCompress.OutputPath))
+                {
+                    var inspection = engineCompress.Inspect(fs, resCompress.OutputPath);
+                    Assert(inspection.IsSupported, "Inspeção GZIP deve indicar IsSupported = true");
+                    Assert(inspection.FormatId == "gzip", "FormatId deve ser gzip");
+                    Assert(inspection.Metadata["CompressionMethod"] == "DEFLATE (RFC 1951)", "Método de compressão deve ser DEFLATE");
+                    Assert(inspection.Metadata["OriginalFileName"] == "dados.csv", "Nome original inspecionado deve ser dados.csv");
+                }
+
+                // Conversão GZ -> CSV (descompressão)
+                string outDir = Path.Combine(tempDir, "out");
+                Directory.CreateDirectory(outDir);
+
+                var reqDecompress = new ConvertRequest
+                {
+                    JobId = "test_gz_d",
+                    InputPath = resCompress.OutputPath,
+                    TargetFormat = "csv",
+                    OutputDirectory = outDir
+                };
+
+                var resDecompress = engineDecompress.Convert(reqDecompress, null);
+                Assert(resDecompress.Status == "completed", "Descompressão deve ter status completed");
+                Assert(File.Exists(resDecompress.OutputPath), "Arquivo descompactado deve existir no disco");
+
+                string decompressedContent = File.ReadAllText(resDecompress.OutputPath, Encoding.UTF8);
+                Assert(decompressedContent == "id,nome\n1,Alpha\n2,Beta\n", "Conteúdo descompactado via engine deve coincidir");
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        private static void Test_Gzip_File_Atomic_Overwrite_Protection()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_gzip_atomic_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string srcTxt = Path.Combine(tempDir, "origem.txt");
+                File.WriteAllText(srcTxt, "Conteúdo inicial atômico", Encoding.UTF8);
+
+                string gzPath = Path.Combine(tempDir, "origem.txt.gz");
+                GzipWriter.CompressFile(srcTxt, gzPath);
+
+                string destPath = Path.Combine(tempDir, "destino.txt");
+                File.WriteAllText(destPath, "Arquivo que já existe antes", Encoding.UTF8);
+
+                // Com overwrite = false, deve falhar com IOException
+                bool threwOverwrite = false;
+                try
+                {
+                    GzipReader.DecompressFile(gzPath, destPath, overwrite: false);
+                }
+                catch (IOException)
+                {
+                    threwOverwrite = true;
+                }
+
+                Assert(threwOverwrite, "DecompressFile com overwrite=false em destino existente deve lançar IOException");
+
+                // Com overwrite = true, deve substituir com sucesso
+                GzipReader.DecompressFile(gzPath, destPath, overwrite: true);
+                string newContent = File.ReadAllText(destPath, Encoding.UTF8);
+                Assert(newContent == "Conteúdo inicial atômico", "Destino deve ser sobrescrito com o conteúdo descomprimido");
+
+                // Verifica ausência de arquivos temporários (.lodinotmp_*)
+                var tmpFiles = Directory.GetFiles(tempDir, ".lodinotmp_*");
+                Assert(tmpFiles.Length == 0, "Nenhum arquivo temporário .lodinotmp_* deve restar no diretório");
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
         }
 
         #endregion

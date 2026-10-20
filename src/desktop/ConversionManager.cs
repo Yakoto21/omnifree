@@ -456,6 +456,8 @@ namespace Lodino.Desktop
                 case "wav":
                 case "wave": return "wav";
                 case "zip": return "extract";
+                case "gz":
+                case "gzip": return "ungz";
                 default: return "png";
             }
         }

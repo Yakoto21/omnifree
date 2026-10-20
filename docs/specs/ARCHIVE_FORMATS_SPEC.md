@@ -211,8 +211,45 @@ Lodino.exe inspect <arquivo.zip>
 | Testes Unitários de ZIP e DEFLATE (Fase 12) | 15 testes | 15 aprovados (0 falhas) |
 | Testes Adversariais de Hardening ZIP (Fase 12.5) | 9 testes | 9 aprovados (0 falhas) |
 | Testes Unitários de DEFLATE Dinâmico BTYPE 10/01/00 (Fase 12.6) | 7 testes | 7 aprovados (0 falhas) |
-| **Total da Suíte Interna (`Lodino.Tests.exe`)** | **198 testes** | **198 APROVADOS (100%)** |
-| Interoperabilidade: Lodino -> Windows `Expand-Archive` | 17 fixtures + 4 contêineres | **100% SHA256 IDÊNTICO** |
-| Interoperabilidade: Lodino -> Python `zipfile` | 17 fixtures + 4 contêineres | **100% SHA256 IDÊNTICO** |
-| Interoperabilidade: Lodino -> Windows `tar.exe` (bsdtar/zlib) | 17 fixtures + 4 contêineres | **100% SHA256 IDÊNTICO** |
+| Testes Unitários do Motor GZIP RFC 1952 (Fase 13) | 16 testes | 16 aprovados (0 falhas) |
+| **Total da Suíte Interna (`Lodino.Tests.exe`)** | **214 testes** | **214 APROVADOS (100%)** |
+| Interoperabilidade GZIP: Matriz Positiva Lodino | 13 fixtures | **100% SHA256 IDÊNTICO** |
+| Interoperabilidade GZIP: Matriz Cruzada Lodino -> Python/PS/Tar | 52 matrizes | **100% SHA256 IDÊNTICO** |
+| Interoperabilidade GZIP: Matriz Adversarial / Segurança | 10 ataques | **100% BLOQUEADO (Exit 2)** |
 | Auditoria de Dependências de Runtime (`Lodino.Core.dll`) | Assemblies externos | **ZERO (apenas mscorlib/System)** |
+
+---
+
+## 8. Especificação Técnica Normativa — Motor GZIP (RFC 1952)
+
+### 8.1 Princípios Arquiteturais e Modelo de Execução
+O motor GZIP do Lodino foi implementado em `src/core/formats/archive/gzip/` como um módulo soberano de compressão de arquivo individual (*File-to-Stream*), diferenciando-se do motor ZIP que opera como contêiner multientrada de diretórios.
+- **Reúso Estrito:** Reutiliza `DeflateCompressor` (RFC 1951, BTYPE 00, 01, 10), `DeflateDecompressor` (RFC 1951) e `Crc32` (IEEE 802.3).
+- **Consumo Exato de Bytes:** `DeflateBitReader` mantém a invariante matemática $0 \le \text{bitsCount} \le 7$ no fim do bloco final de DEFLATE (`BFINAL = 1`), alinhando ao próximo byte via `AlignToByte()` e deixando o fluxo posicionado exatamente no primeiro byte do trailer de 8 bytes, sem consumir bytes antecipadamente.
+- **Membros Concatenados (RFC 1952 § 2.2):** Suporte nativo à descompressão sequencial de fluxos com múltiplos membros concatenados até o fim do fluxo (EOF), validando o CRC-32 e ISIZE individual de cada membro.
+
+### 8.2 Estrutura Binária do Membro GZIP
+```
++---+---+---+---+---+---+---+---+---+---+
+|ID1|ID2|CM |FLG|     MTIME     |XFL|OS | (Cabeçalho Fixo: 10 bytes)
++---+---+---+---+---+---+---+---+---+---+
+| [XLEN] [Extra Subfields...]           | (se FLG.FEXTRA = 1)
++---+---+---+---+---+---+---+---+---+---+
+| [Original File Name, zero-terminated] | (se FLG.FNAME = 1)
++---+---+---+---+---+---+---+---+---+---+
+| [File Comment, zero-terminated]       | (se FLG.FCOMMENT = 1)
++---+---+---+---+---+---+---+---+---+---+
+| [CRC16 of Header]                     | (se FLG.FHCRC = 1)
++---+---+---+---+---+---+---+---+---+---+
+| ... Compressed DEFLATE Payload ...    | (RFC 1951)
++---+---+---+---+---+---+---+---+---+---+
+|     CRC32     |     ISIZE     |       | (Trailer Fixo: 8 bytes)
++---+---+---+---+---+---+---+---+---+---+
+```
+
+### 8.3 Blindagem de Segurança e Tetos de Recursos
+1. **Proteção contra Decompression Bombs:** O campo `ISIZE` armazena o tamanho original módulo $2^{32}$ (4 GB). Conforme auditado pelo Agente C, um payload de 5 GB resulta em ISIZE de ~705 MB e 4 GB resulta em ISIZE = 0. O Lodino nunca confia no `ISIZE` para alocação de buffers; a descompressão é orientada a streaming com teto progressivo `DefaultMaxGzipExtractedBytes = 500 MB` disparando `ResourceLimitException` no primeiro byte excedente.
+2. **Mitigação de Path Traversal:** O metadado `FNAME` é considerado não-confiável e nunca determina o caminho de escrita diretamente. A derivação do destino é resolvida de forma segura a partir do arquivo de entrada (removendo a extensão `.gz`).
+3. **Escrita Atômica e Sobrescrita:** Todo arquivo é descompactado primeiramente em um temporário `.lodinotmp_*` no mesmo diretório de destino. Se houver falha, corrupção ou limite excedido, o temporário é removido no `catch`. Se `overwrite = false` e o destino já existir, a operação é abortada antes de iniciar a extração.
+4. **Validação de Cabeçalho e Flags:** Bits 5, 6 e 7 do byte `FLG` são reservados pela RFC 1952 e sua ativação acarreta rejeição imediata com `CorruptDataException`. Método de compressão diferente de 8 (DEFLATE) é rejeitado com `UnsupportedFormatException`.
+
