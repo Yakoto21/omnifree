@@ -140,7 +140,15 @@ namespace Lodino.Core.Formats.Image.Png
             long maxOutputBytes)
         {
             int hlit = reader.ReadBits(5) + 257;
+            if (hlit > 286)
+            {
+                throw new CorruptDataException("HLIT inválido no cabeçalho dinâmico DEFLATE: " + hlit);
+            }
             int hdist = reader.ReadBits(5) + 1;
+            if (hdist > 32)
+            {
+                throw new CorruptDataException("HDIST inválido no cabeçalho dinâmico DEFLATE: " + hdist);
+            }
             int hclen = reader.ReadBits(4) + 4;
 
             int[] clLengths = new int[19];

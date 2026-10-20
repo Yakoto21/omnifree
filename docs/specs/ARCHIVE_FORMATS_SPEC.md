@@ -113,14 +113,16 @@ O descompressor implementado no Lodino suporta os três tipos de blocos da RFC 1
 - **Buffer Circular LZ77:** Janela deslizante de 32 KB com indexação mascarada `(historyPos - distance) & 32767`.
 
 ### 3.2 Compressor Proprietário (`DeflateCompressor.cs`)
-O motor oferece três níveis configuráveis de compressão:
+O motor oferece três níveis configuráveis de compressão com suporte a emissão adaptativa de blocos **Stored (BTYPE 00)**, **Fixed Huffman (BTYPE 01)** e **Dynamic Huffman (BTYPE 10)**:
 1. **`Store` (Método 0):** Gravação direta dos bytes sem compressão. Ideal para dados já comprimidos (JPEG, PNG, MP4, etc.).
 2. **`Fast` (Método 8 - DEFLATE Stored):** Emissão de blocos não-comprimidos (BTYPE 00) divididos em fatias máximas de 65.535 bytes, em conformidade com o envelope DEFLATE.
-3. **`Optimal` (Método 8 - DEFLATE Fixed Huffman + LZ77):**
-   - **Localizador de Casamentos LZ77:** Janela histórica deslizante de 32 KB ($2^{15}$ bytes) utilizando uma tabela hash de 65.536 entradas (`head`) e encadeamento linear (`prev`).
-   - Identificação de correspondências de comprimento mínimo 3 e máximo 258 bytes dentro da distância máxima de 32.768 bytes.
-   - Emissão de blocos Fixed Huffman (BTYPE 01) com inversão de bits canônicos pré-computada em lookup tables (`FixedLitReversed` e `FixedDistReversed`) para escrita contínua bit a bit LSB-first (`DeflateBitWriter.cs`).
-   - Símbolo de fim de bloco EOB (256) e alinhamento final de byte.
+3. **`Optimal` (Método 8 - DEFLATE Adaptativo com Dynamic Huffman + LZ77):**
+   - **Localizador de Casamentos LZ77:** Janela histórica deslizante de 32 KB ($2^{15}$ bytes) utilizando uma tabela hash de 65.536 entradas (`head`) e encadeamento linear (`prev`), limitando profundidade de busca a 32 passos.
+   - **Geração de Árvores Canônicas com Kraft-McMillan:** Construção via min-heap com nivelamento estrito de profundidade máxima ($\le 15$ bits para literais/distâncias e $\le 7$ bits para comprimentos de código), garantindo a desigualdade de Kraft ($\sum 2^{-\text{len}} \le 1.0$) e equalização canônica ($\sum 2^{-\text{len}} = 1.0$) para plena compatibilidade com descompressores estritos (`zlib`, `bsdtar`, `libarchive`, `System.IO.Compression.DeflateStream`).
+   - **Codificação RLE de Comprimentos de Código:** Compressão da tabela de comprimentos conforme RFC 1951 § 3.2.7 (símbolos literais 0..15, símbolo 16 para 3..6 repetições, símbolo 17 para 3..10 zeros e símbolo 18 para 11..138 zeros), assegurando que o símbolo 16 nunca seja emitido no início da sequência.
+   - **Truncamento Ótimo de Cabeçalho:** Cálculo exato de `HLIT` (257..286), `HDIST` (1..30) e `HCLEN` (4..19), omitindo símbolos com comprimento zero na cauda e economizando até 45 bits de sobrecarga por bloco.
+   - **Tratamento de Árvore de Distâncias Vazia:** Em blocos puramente literais (0 casamentos LZ77), transmite `HDIST = 1` com código de distância único de comprimento 1, satisfazendo a exigência da RFC 1951 § 3.2.7.
+   - **Modelo de Custo em Bits e Seleção Automática:** Para cada bloco de até 65.535 bytes, o compressor avalia matematicamente o custo exato em bits para Stored ($3 + \text{pad} + 32 + 8D$), Fixed ($3 + \sum \text{bits}_{\text{fixed}} + 7$) e Dynamic ($3 + 14 + 3 \times \text{HCLEN} + \text{bits}_{\text{rle}} + \sum \text{bits}_{\text{dynamic}} + \text{len}_{\text{eob}}$). O modo com menor custo é emitido, aplicando fallback automático para Stored em dados aleatórios/incompressíveis e Fixed em payloads minúsculos (< 100 bytes).
 
 ---
 
@@ -206,8 +208,11 @@ Lodino.exe inspect <arquivo.zip>
 | Categoria de Teste | Quantidade | Resultado |
 |---|---|---|
 | Suíte Histórica (CSV, JSON, INI, BMP, PNG, JPEG, WAV, Desktop) | 167 testes | 167 aprovados (0 regressões) |
-| Novos Testes Unitários de ZIP e DEFLATE | 15 testes | 15 aprovados (0 falhas) |
-| **Total da Suíte Interna (`Lodino.Tests.exe`)** | **182 testes** | **182 APROVADOS (100%)** |
-| Interoperabilidade: Lodino -> Windows `Expand-Archive` | 3 arquivos + 1 subpasta | **100% SHA256 IDÊNTICO** |
-| Interoperabilidade: Windows `Compress-Archive` -> Lodino `unzip` | 3 arquivos + 1 subpasta | **100% SHA256 IDÊNTICO** |
+| Testes Unitários de ZIP e DEFLATE (Fase 12) | 15 testes | 15 aprovados (0 falhas) |
+| Testes Adversariais de Hardening ZIP (Fase 12.5) | 9 testes | 9 aprovados (0 falhas) |
+| Testes Unitários de DEFLATE Dinâmico BTYPE 10/01/00 (Fase 12.6) | 7 testes | 7 aprovados (0 falhas) |
+| **Total da Suíte Interna (`Lodino.Tests.exe`)** | **198 testes** | **198 APROVADOS (100%)** |
+| Interoperabilidade: Lodino -> Windows `Expand-Archive` | 17 fixtures + 4 contêineres | **100% SHA256 IDÊNTICO** |
+| Interoperabilidade: Lodino -> Python `zipfile` | 17 fixtures + 4 contêineres | **100% SHA256 IDÊNTICO** |
+| Interoperabilidade: Lodino -> Windows `tar.exe` (bsdtar/zlib) | 17 fixtures + 4 contêineres | **100% SHA256 IDÊNTICO** |
 | Auditoria de Dependências de Runtime (`Lodino.Core.dll`) | Assemblies externos | **ZERO (apenas mscorlib/System)** |

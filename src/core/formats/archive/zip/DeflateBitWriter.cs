@@ -32,6 +32,36 @@ namespace Lodino.Core.Formats.Archive.Zip
             }
         }
 
+        public void AlignToByte()
+        {
+            if (_bitCount > 0)
+            {
+                int pad = 8 - _bitCount;
+                WriteBits(0, pad);
+            }
+        }
+
+        public void WriteByte(byte b)
+        {
+            WriteBits(b, 8);
+        }
+
+        public void WriteBytes(byte[] buffer, int offset, int count)
+        {
+            if (buffer == null) throw new ArgumentNullException("buffer");
+            if (_bitCount == 0)
+            {
+                _stream.Write(buffer, offset, count);
+            }
+            else
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    WriteByte(buffer[offset + i]);
+                }
+            }
+        }
+
         public void Flush()
         {
             if (_bitCount > 0)

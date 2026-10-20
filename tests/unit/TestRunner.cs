@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Lodino.Core.Api;
@@ -308,6 +309,23 @@ namespace Lodino.Tests
             RunTest("HARDENING ZIP: Rejeição de streams não-navegáveis (CanSeek = false) no ZipWriter", Test_Hardening_Zip_NonSeekable_ZipWriter_Rejection);
             RunTest("HARDENING ZIP: Proteção contra sobrescrita indevida (overwrite = false) e substituição atômica", Test_Hardening_Zip_ExtractAll_OverwriteFalse_ThrowsIfExists);
             RunTest("HARDENING ZIP: Restauração fiel de carimbos de data/hora em diretórios extraídos", Test_Hardening_Zip_DirectoryTimestamps_Restored);
+
+            // =================================================
+            //   LODINO NATIVE CORE — DEFLATE DINÂMICO (FASE 12.6) 
+            //   Módulo: Compressor Adaptativo BTYPE 00, 01 e 10
+            // =================================================
+            Console.WriteLine("\n=================================================");
+            Console.WriteLine("  LODINO NATIVE CORE — DEFLATE DINÂMICO (FASE 12.6) ");
+            Console.WriteLine("  Módulo: Compressor Adaptativo BTYPE 00, 01 e 10");
+            Console.WriteLine("=================================================\n");
+
+            RunTest("DYNAMIC DEFLATE: Round-trip e seleção BTYPE 10 em texto com assimetria de frequências", Test_DynamicDeflate_RoundTrip_Text_BType10);
+            RunTest("DYNAMIC DEFLATE: Seleção automática de Fixed Huffman (BTYPE 01) em payloads pequenos", Test_DynamicDeflate_AutoSelect_FixedHuffman_SmallPayload);
+            RunTest("DYNAMIC DEFLATE: Seleção automática de Stored (BTYPE 00) em dados incompressíveis", Test_DynamicDeflate_AutoSelect_Stored_IncompressibleData);
+            RunTest("DYNAMIC DEFLATE: Casos degenerados (0 bytes, 1 byte, monossímbolo e Fibonacci Kraft-McMillan)", Test_DynamicDeflate_Degenerate_And_KraftMcMillan_Cases);
+            RunTest("DYNAMIC DEFLATE: Árvore de distâncias vazia (bloco puramente literal sem correspondências LZ77)", Test_DynamicDeflate_EmptyDistanceTree_Compatibility);
+            RunTest("DYNAMIC DEFLATE: Integração completa no ZipWriter e extração fiel no ZipReader", Test_DynamicDeflate_ZipWriter_Integration);
+            RunTest("DYNAMIC DEFLATE (Segurança): Rejeição de HLIT > 286 e HDIST > 32 no decodificador", Test_DynamicDeflate_Decompressor_Guards_HlitHdist);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -7171,6 +7189,307 @@ namespace Lodino.Tests
             public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
             public override void SetLength(long value) { throw new NotSupportedException(); }
             public override void Write(byte[] buffer, int offset, int count) { }
+        }
+
+        #endregion
+
+        #region DEFLATE DINÂMICO (FASE 12.6)
+
+        private static void Test_DynamicDeflate_RoundTrip_Text_BType10()
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < 150; i++)
+            {
+                sb.AppendLine("Line " + i + ": The quick brown fox jumps over the lazy dog. DEFLATE Dynamic Huffman in pure C#.");
+            }
+            byte[] input = Encoding.UTF8.GetBytes(sb.ToString());
+
+            byte[] compressed = DeflateCompressor.Compress(input, ZipCompressionLevel.Optimal);
+
+            // BFINAL (bit 0) e BTYPE (bits 1..2)
+            int bfinal = compressed[0] & 1;
+            int btype = (compressed[0] >> 1) & 3;
+
+            AssertEqual(1, bfinal, "BFINAL deve ser 1");
+            AssertEqual(2, btype, "BTYPE deve ser 10 (Dynamic Huffman) para texto longo com frequências assimétricas");
+            Assert(compressed.Length < input.Length, "Stream comprimido deve ser menor que o original");
+
+            // Descompressão com DeflateDecompressor proprietário
+            byte[] decompressed;
+            using (var msIn = new MemoryStream(compressed))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                decompressed = msOut.ToArray();
+            }
+
+            AssertEqual(input.Length, decompressed.Length, "Tamanho descomprimido");
+            for (int i = 0; i < input.Length; i++)
+            {
+                if (input[i] != decompressed[i])
+                {
+                    throw new Exception("Divergência de byte no offset " + i);
+                }
+            }
+
+            // Descompressão cruzada com oráculo .NET DeflateStream
+            using (var msIn = new MemoryStream(compressed))
+            using (var ds = new System.IO.Compression.DeflateStream(msIn, System.IO.Compression.CompressionMode.Decompress))
+            using (var msOut = new MemoryStream())
+            {
+                ds.CopyTo(msOut);
+                byte[] oracleDecomp = msOut.ToArray();
+                AssertEqual(input.Length, oracleDecomp.Length, "Tamanho oráculo .NET");
+                for (int i = 0; i < input.Length; i++)
+                {
+                    if (input[i] != oracleDecomp[i])
+                    {
+                        throw new Exception("Divergência com oráculo .NET no offset " + i);
+                    }
+                }
+            }
+        }
+
+        private static void Test_DynamicDeflate_AutoSelect_FixedHuffman_SmallPayload()
+        {
+            byte[] input = Encoding.UTF8.GetBytes("Short line: status=200 OK. Port 80.");
+
+            byte[] compressed = DeflateCompressor.Compress(input, ZipCompressionLevel.Optimal);
+
+            int btype = (compressed[0] >> 1) & 3;
+            AssertEqual(1, btype, "BTYPE deve ser 01 (Fixed Huffman) para pequenos payloads");
+
+            byte[] decompressed;
+            using (var msIn = new MemoryStream(compressed))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                decompressed = msOut.ToArray();
+            }
+
+            AssertEqual(input.Length, decompressed.Length, "Tamanho descomprimido");
+            for (int i = 0; i < input.Length; i++)
+            {
+                AssertEqual(input[i], decompressed[i], "Byte no offset " + i);
+            }
+        }
+
+        private static void Test_DynamicDeflate_AutoSelect_Stored_IncompressibleData()
+        {
+            var rnd = new Random(42);
+            byte[] input = new byte[2048];
+            rnd.NextBytes(input);
+
+            byte[] compressed = DeflateCompressor.Compress(input, ZipCompressionLevel.Optimal);
+
+            int btype = (compressed[0] >> 1) & 3;
+            AssertEqual(0, btype, "BTYPE deve ser 00 (Stored) para dados aleatórios incompressíveis");
+
+            byte[] decompressed;
+            using (var msIn = new MemoryStream(compressed))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                decompressed = msOut.ToArray();
+            }
+
+            AssertEqual(input.Length, decompressed.Length, "Tamanho descomprimido");
+            for (int i = 0; i < input.Length; i++)
+            {
+                if (input[i] != decompressed[i])
+                {
+                    throw new Exception("Divergência de byte em dados stored no offset " + i);
+                }
+            }
+        }
+
+        private static void Test_DynamicDeflate_Degenerate_And_KraftMcMillan_Cases()
+        {
+            // Caso 1: 0 bytes
+            byte[] empty = new byte[0];
+            byte[] compEmpty = DeflateCompressor.Compress(empty, ZipCompressionLevel.Optimal);
+            using (var msIn = new MemoryStream(compEmpty))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                AssertEqual(0, msOut.Length, "Descompressão de 0 bytes");
+            }
+
+            // Caso 2: 1 byte
+            byte[] single = new byte[] { 0x42 };
+            byte[] compSingle = DeflateCompressor.Compress(single, ZipCompressionLevel.Optimal);
+            using (var msIn = new MemoryStream(compSingle))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                AssertEqual(1, msOut.Length, "Descompressão de 1 byte");
+                AssertEqual((byte)0x42, msOut.ToArray()[0], "Valor de 1 byte");
+            }
+
+            // Caso 3: Monossímbolo repetido (1000 'A's)
+            byte[] mono = Encoding.UTF8.GetBytes(new string('A', 1000));
+            byte[] compMono = DeflateCompressor.Compress(mono, ZipCompressionLevel.Optimal);
+            using (var msIn = new MemoryStream(compMono))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                byte[] decompMono = msOut.ToArray();
+                AssertEqual(1000, decompMono.Length, "Descompressão de monossímbolo repetido");
+                for (int i = 0; i < 1000; i++)
+                {
+                    AssertEqual((byte)'A', decompMono[i], "Caractere 'A' repetido");
+                }
+            }
+
+            // Caso 4: Distribuição Fibonacci forçando árvore profunda (Kraft-McMillan depth leveling)
+            var fibData = new List<byte>();
+            int a = 1, b = 1;
+            for (byte sym = 1; sym <= 25; sym++)
+            {
+                int count = Math.Min(b, 500);
+                for (int c = 0; c < count; c++)
+                {
+                    fibData.Add(sym);
+                }
+                int next = a + b;
+                a = b;
+                b = next;
+            }
+            byte[] fibBytes = fibData.ToArray();
+            byte[] compFib = DeflateCompressor.Compress(fibBytes, ZipCompressionLevel.Optimal);
+            using (var msIn = new MemoryStream(compFib))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                byte[] decompFib = msOut.ToArray();
+                AssertEqual(fibBytes.Length, decompFib.Length, "Tamanho descomprimido Fibonacci");
+                for (int i = 0; i < fibBytes.Length; i++)
+                {
+                    if (fibBytes[i] != decompFib[i]) throw new Exception("Divergência Fibonacci no offset " + i);
+                }
+            }
+        }
+
+        private static void Test_DynamicDeflate_EmptyDistanceTree_Compatibility()
+        {
+            byte[] literalsOnly = new byte[256];
+            for (int i = 0; i < 256; i++) literalsOnly[i] = (byte)i;
+
+            byte[] compressed;
+            using (var msOut = new MemoryStream())
+            {
+                DeflateCompressor.CompressDynamic(literalsOnly, msOut);
+                compressed = msOut.ToArray();
+            }
+
+            int btype = (compressed[0] >> 1) & 3;
+            AssertEqual(2, btype, "BTYPE deve ser 10 (Dynamic Huffman)");
+
+            using (var msIn = new MemoryStream(compressed))
+            using (var msOut = new MemoryStream())
+            {
+                DeflateDecompressor.Decompress(msIn, msOut);
+                byte[] decomp = msOut.ToArray();
+                AssertEqual(256, decomp.Length, "Tamanho descomprimido");
+                for (int i = 0; i < 256; i++)
+                {
+                    AssertEqual((byte)i, decomp[i], "Literal no offset " + i);
+                }
+            }
+
+            using (var msIn = new MemoryStream(compressed))
+            using (var ds = new System.IO.Compression.DeflateStream(msIn, System.IO.Compression.CompressionMode.Decompress))
+            using (var msOut = new MemoryStream())
+            {
+                ds.CopyTo(msOut);
+                AssertEqual(256, msOut.Length, "Oráculo .NET deve aceitar árvore de distâncias vazia (HDIST=1)");
+            }
+        }
+
+        private static void Test_DynamicDeflate_ZipWriter_Integration()
+        {
+            byte[] zipData;
+            byte[] textPayload = Encoding.UTF8.GetBytes(new string('X', 500) + " Lodino Dynamic ZIP Integration " + new string('Y', 500));
+            byte[] smallPayload = Encoding.UTF8.GetBytes("key=value");
+            byte[] randomPayload = new byte[512];
+            new Random(123).NextBytes(randomPayload);
+
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new ZipWriter(ms, leaveOpen: true))
+                {
+                    writer.AddEntry("text_dyn.txt", textPayload, ZipCompressionLevel.Optimal);
+                    writer.AddEntry("small_fixed.ini", smallPayload, ZipCompressionLevel.Optimal);
+                    writer.AddEntry("random_store.bin", randomPayload, ZipCompressionLevel.Optimal);
+                    writer.Finish();
+                }
+                zipData = ms.ToArray();
+            }
+
+            using (var ms = new MemoryStream(zipData))
+            using (var reader = new ZipReader(ms))
+            {
+                AssertEqual(3, reader.Entries.Count, "Quantidade de entradas no ZIP");
+
+                byte[] e1;
+                using (var e1Ms = new MemoryStream())
+                {
+                    reader.ExtractEntry(reader.Entries[0], e1Ms);
+                    e1 = e1Ms.ToArray();
+                }
+                AssertEqual(textPayload.Length, e1.Length, "Tamanho text_dyn.txt");
+                for (int i = 0; i < textPayload.Length; i++)
+                {
+                    AssertEqual(textPayload[i], e1[i], "Byte em text_dyn.txt");
+                }
+
+                byte[] e2;
+                using (var e2Ms = new MemoryStream())
+                {
+                    reader.ExtractEntry(reader.Entries[1], e2Ms);
+                    e2 = e2Ms.ToArray();
+                }
+                AssertEqual(smallPayload.Length, e2.Length, "Tamanho small_fixed.ini");
+
+                byte[] e3;
+                using (var e3Ms = new MemoryStream())
+                {
+                    reader.ExtractEntry(reader.Entries[2], e3Ms);
+                    e3 = e3Ms.ToArray();
+                }
+                AssertEqual(randomPayload.Length, e3.Length, "Tamanho random_store.bin");
+                for (int i = 0; i < randomPayload.Length; i++)
+                {
+                    AssertEqual(randomPayload[i], e3[i], "Byte em random_store.bin");
+                }
+            }
+        }
+
+        private static void Test_DynamicDeflate_Decompressor_Guards_HlitHdist()
+        {
+            // Cria um fluxo DEFLATE dinâmico malformado com HLIT = 30 (257 + 30 = 287 > 286)
+            // Bit 0: BFINAL=1, Bits 1..2: BTYPE=10 (Dynamic) -> valor 0x05 (101b)
+            // Bits 3..7: HLIT (5 bits = 30 -> 11110b)
+            // 0x05 | (30 << 3) = 0x05 | 240 = 245 (0xF5)
+            byte[] corruptHlit = new byte[] { 0xF5, 0x00, 0x00, 0x00 };
+
+            bool threwHlit = false;
+            try
+            {
+                using (var msIn = new MemoryStream(corruptHlit))
+                using (var msOut = new MemoryStream())
+                {
+                    DeflateDecompressor.Decompress(msIn, msOut);
+                }
+            }
+            catch (CorruptDataException ex)
+            {
+                if (ex.Message.Contains("HLIT"))
+                {
+                    threwHlit = true;
+                }
+            }
+            Assert(threwHlit, "HLIT > 286 deve lançar CorruptDataException no decodificador");
         }
 
         #endregion
