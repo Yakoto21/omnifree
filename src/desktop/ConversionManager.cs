@@ -74,8 +74,13 @@ namespace Lodino.Desktop
             {
                 string ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
                 string target = defaultTargetFormat;
-                if (string.IsNullOrEmpty(target))
+                if (string.IsNullOrEmpty(target) || target.Equals("auto", StringComparison.OrdinalIgnoreCase))
                 {
+                    target = SuggestTargetFormat(ext);
+                }
+                else if (!CanConvert(ext, target))
+                {
+                    // Se o formato alvo pedido não puder ser aplicado ao arquivo, adota rota inteligente nativa
                     target = SuggestTargetFormat(ext);
                 }
 
@@ -174,9 +179,21 @@ namespace Lodino.Desktop
                     job.ProgressPercent = 0;
                     job.ErrorMessage = null;
 
-                    if (!string.IsNullOrEmpty(overrideTargetFormat))
+                    if (!string.IsNullOrEmpty(overrideTargetFormat) && !overrideTargetFormat.Equals("auto", StringComparison.OrdinalIgnoreCase))
                     {
-                        job.TargetFormat = overrideTargetFormat.Trim().ToLowerInvariant().TrimStart('.');
+                        string cleanOverride = overrideTargetFormat.Trim().ToLowerInvariant().TrimStart('.');
+                        if (CanConvert(job.SourceFormat, cleanOverride))
+                        {
+                            job.TargetFormat = cleanOverride;
+                        }
+                        else
+                        {
+                            // Preserva a operação original se for válida; caso contrário, sugere operação compatível
+                            if (!CanConvert(job.SourceFormat, job.TargetFormat))
+                            {
+                                job.TargetFormat = SuggestTargetFormat(job.SourceFormat);
+                            }
+                        }
                     }
 
                     if (commonParameters != null)
@@ -442,9 +459,29 @@ namespace Lodino.Desktop
             return Path.Combine(directory, string.Format("{0}_{1}{2}", baseName, Guid.NewGuid().ToString("N").Substring(0, 8), extension));
         }
 
-        private string SuggestTargetFormat(string inputExt)
+        public static bool CanConvert(string sourceFormat, string targetFormat)
         {
-            switch (inputExt.ToLowerInvariant())
+            if (string.IsNullOrEmpty(sourceFormat) || string.IsNullOrEmpty(targetFormat)) return false;
+            string src = sourceFormat.Trim().ToLowerInvariant().TrimStart('.');
+            string tgt = targetFormat.Trim().ToLowerInvariant().TrimStart('.');
+
+            if (tgt == "auto") return true;
+
+            var engines = EngineRegistry.Default.GetAll();
+            foreach (var engine in engines)
+            {
+                if (engine.CanConvert(src, tgt))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static string SuggestTargetFormat(string inputExt)
+        {
+            if (string.IsNullOrEmpty(inputExt)) return "png";
+            switch (inputExt.Trim().ToLowerInvariant().TrimStart('.'))
             {
                 case "bmp": return "png";
                 case "png": return "jpg";
@@ -457,9 +494,53 @@ namespace Lodino.Desktop
                 case "wave": return "wav";
                 case "zip": return "extract";
                 case "gz":
-                case "gzip": return "ungz";
-                default: return "png";
+                case "gzip": return "extract";
+                default: return "zip";
             }
+        }
+
+        public void ProcessBatchSynchronously(string overrideTargetFormat = null, string outputDirectory = null, IDictionary<string, string> commonParameters = null)
+        {
+            lock (_lock)
+            {
+                if (_jobs.Count == 0) return;
+                _isRunning = true;
+                _cancelRequested = false;
+
+                foreach (var job in _jobs)
+                {
+                    if (job.Status == JobStatus.Completed) continue;
+                    job.Status = JobStatus.Queued;
+                    job.ProgressPercent = 0;
+                    job.ErrorMessage = null;
+
+                    if (!string.IsNullOrEmpty(overrideTargetFormat) && !overrideTargetFormat.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string cleanOverride = overrideTargetFormat.Trim().ToLowerInvariant().TrimStart('.');
+                        if (CanConvert(job.SourceFormat, cleanOverride))
+                        {
+                            job.TargetFormat = cleanOverride;
+                        }
+                        else
+                        {
+                            if (!CanConvert(job.SourceFormat, job.TargetFormat))
+                            {
+                                job.TargetFormat = SuggestTargetFormat(job.SourceFormat);
+                            }
+                        }
+                    }
+
+                    if (commonParameters != null)
+                    {
+                        foreach (var kvp in commonParameters)
+                        {
+                            job.Parameters[kvp.Key] = kvp.Value;
+                        }
+                    }
+                }
+            }
+
+            ProcessBatchWorker(outputDirectory);
         }
     }
 }

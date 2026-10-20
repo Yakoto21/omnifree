@@ -1,0 +1,61 @@
+================================================================================
+  LODINO NATIVE SUITE — LIMITAÇÕES TÉCNICAS CONHECIDAS (VERSÃO 1.0.0-RC.2)
+================================================================================
+
+Este documento descreve de forma transparente os limites de implementação,
+características intencionalmente não suportadas e salvaguardas de segurança dos
+motores nativos do Lodino.
+
+1. FORMATO CSV (RFC 4180):
+   - Suporte a vírgulas em aspas, quebras multilinha e aspas duplas escapadas ("").
+   - Limitação: Não suporta codificações legadas obscuras como EBCDIC (adota UTF-8 / ANSI).
+   - Limite de segurança: Arquivos com mais de 500 MB são bloqueados por segurança.
+
+2. FORMATO JSON (RFC 8259):
+   - Conformidade normativa com ECMA-404 / RFC 8259.
+   - Limitação: Rejeita comentários (JSONC), vírgulas finais não citadas e zeros à esquerda.
+   - Limitação: A conversão de JSON para CSV requer uma estrutura de lista de objetos planos.
+     Propriedades aninhadas são aplanadas como texto bruto para evitar perda de dados.
+
+3. FORMATO INI:
+   - Suporta propriedades globais e seções bem delimitadas por colchetes [Secao].
+   - Limitação: Não suporta herança de seções nem estruturas hierárquicas multinível.
+
+4. FORMATO BMP (BITMAP WINDOWS):
+   - Suporta imagens de 24 bits (BGR) e 32 bits (BGRX opaco), tanto bottom-up quanto top-down.
+   - Limitação: Imagens com paleta indexada (1, 4 e 8 bits por pixel) e compressão RLE4 / RLE8
+     não são suportadas nesta versão e são rejeitadas com mensagem clara de erro.
+
+5. FORMATO PNG (ISO/IEC 15948):
+   - Suporta imagens Truecolor RGB (24-bit) e Truecolor com canal alfa RGBA (32-bit), com
+     profundidade de 8 bits por canal, compressão ZLIB e 5 filtros scanline normativos.
+   - Limitação: Não suporta imagens entrelaçadas pelo método Adam7, animações APNG, cores
+     indexadas via paleta PLTE, imagens de 16 bits por canal e escala de cinza sem alfa.
+
+6. FORMATO JPEG (ISO/IEC 10918-1 / ITU-T T.81):
+   - Suporta decodificação e codificação Baseline Sequential (SOF0) de 8 bits de profundidade,
+     com subamostragens YCbCr 4:4:4, 4:2:2, 4:2:0 e escala de cinza (monocromático).
+   - Limitação: Não suporta Progressive JPEG (SOF2), JPEG Lossless, codificação aritmética,
+     JPEG 2000, JPEG-XL e espaços de cor CMYK/YCCK.
+
+7. FORMATO WAV (RIFF/WAVE PCM):
+   - Suporta áudio não comprimido PCM linear de 8, 16, 24 e 32 bits inteiros e IEEE Float 32 bits,
+     em configurações mono e estéreo, suportando tamanhos de dados superiores a 64 MB.
+   - Limitação: Não suporta áudio comprimido (ex: ADPCM, MP3-WAV, GSM, WMA) nem reprodução
+     multicanal surround (> 2 canais). O Lodino não converte de ou para MP3, AAC ou FLAC.
+
+8. FORMATO ZIP (PKZIP):
+   - Suporta criação e extração de arquivos nos modos Stored (BTYPE 00), Fixed Huffman (BTYPE 01)
+     e Dynamic Huffman (BTYPE 10), com blindagem total contra Zip Slip e nomes Win32 reservados.
+   - Limitação: Não suporta arquivos ZIP64 (arquivos > 4 GB ou com mais de 65.535 entradas),
+     arquivos criptografados por senha e métodos proprietários como BZIP2, LZMA ou Deflate64.
+
+9. FORMATO GZIP (RFC 1952):
+   - Suporta compressão e descompressão por streaming de arquivos únicos e múltiplos membros
+     concatenados, com verificação estrita de trailer CRC-32 e ISIZE.
+   - Limitação: GZIP comprime arquivos individuais. Para empacotar pastas inteiras, utilize
+     o formato ZIP. Metadados seguem a norma estrita Latin-1 da RFC 1952.
+
+10. SEGURANÇA E SISTEMA OPERACIONAL:
+   - Os binários desta versão Release Candidate 2 (RC2) não possuem certificado comercial Authenticode.
+     Em instalações externas, o Windows Defender SmartScreen poderá exibir um aviso informativo.

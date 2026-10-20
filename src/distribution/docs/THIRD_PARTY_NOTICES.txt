@@ -1,0 +1,52 @@
+================================================================================
+  LODINO NATIVE SUITE — ATRIBUIÇÕES TÉCNICAS E ESPECIFICAÇÕES ABERTAS
+================================================================================
+
+O Lodino Native Suite é implementado em C# soberano sem utilizar bibliotecas,
+codecs, executáveis ou pacotes externos no seu runtime de produção.
+
+O desenvolvimento dos motores seguiu estritamente as especificações e padrões
+públicos e normativos da indústria:
+
+1. CSV: RFC 4180 — "Common Format and MIME Type for Comma-Separated Values (CSV) Files"
+   (IETF Network Working Group, Outubro de 2005).
+
+2. JSON: RFC 8259 / ECMA-404 — "The JavaScript Object Notation (JSON) Data Interchange Format"
+   (IETF e Ecma International, Dezembro de 2017).
+
+3. DEFLATE: RFC 1951 — "DEFLATE Compressed Data Format Specification version 1.3"
+   (P. Deutsch, Maio de 1996).
+
+4. GZIP: RFC 1952 — "GZIP file format specification version 4.3"
+   (P. Deutsch, Maio de 1996).
+
+5. PNG: ISO/IEC 15948:2004 / W3C Recommendation — "Portable Network Graphics (PNG) Specification"
+   (W3C e ISO/IEC JTC 1, Novembro de 2003).
+
+6. JPEG: ISO/IEC 10918-1 / ITU-T Recommendation T.81 — "Information technology — Digital
+   compression and coding of continuous-tone still images — Part 1: Requirements and guidelines"
+   (ITU-T e ISO/IEC, Setembro de 1992).
+
+7. RIFF/WAVE: "Multimedia Programming Interface and Data Specifications 1.0"
+   (IBM Corporation e Microsoft Corporation, Agosto de 1991).
+
+8. BMP: "Microsoft Windows DIB (Device-Independent Bitmap) Format Specification"
+   (Microsoft Corporation).
+
+9. ZIP: "APPNOTE.TXT — .ZIP File Format Specification"
+   (PKWARE Inc., Versão 6.3.9).
+
+10. Windows Installer (NSIS):
+    O instalador distribuível para Windows é gerado utilizando o Nullsoft Scriptable
+    Install System (NSIS), versão 3 (compatível com NSIS 3.10 / 3.13).
+    Copyright © 1999-2026 Contribuidores do NSIS.
+    O runtime stub do executável do instalador e o motor de compilação são distribuídos
+    sob os termos da licença permissiva zlib/libpng.
+    O instalador utiliza exclusivamente o módulo nativo de compressão zlib (licenciado sob a licença zlib).
+    O uso do NSIS não sujeita o código do Lodino a restrições copyleft e autoriza
+    a livre distribuição comercial e não comercial sem custos de royalties ou taxas de runtime.
+
+Aviso de Isenção:
+Marcas registradas, formatos e nomes de padrões pertencem aos seus respectivos
+detentores e são citados aqui exclusivamente para fins de interoperabilidade e
+identificação técnica dos formatos processados.

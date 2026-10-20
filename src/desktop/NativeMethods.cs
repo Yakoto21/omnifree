@@ -338,8 +338,15 @@ namespace Lodino.Desktop
         [DllImport("user32.dll")]
         public static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
 
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        public static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
+
         public const int IDC_ARROW = 32512;
+        public const int IDI_APPLICATION = 32512;
         public const int SW_SHOW = 5;
+        public const uint WM_SETICON = 0x0080;
+        public const int ICON_SMALL = 0;
+        public const int ICON_BIG = 1;
 
         // -------------------------------------------------------------
         // Funções da Gdi32.dll
