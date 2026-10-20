@@ -14,7 +14,7 @@
 #endif
 
 #ifndef MyAppPublisher
-#define MyAppPublisher "Lodino Native Suite Team"
+#define MyAppPublisher "Lodino Project"
 #endif
 
 #ifndef MyAppURL
