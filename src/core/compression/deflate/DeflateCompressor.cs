@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Lodino.Core.Formats.Archive.Zip;
 using Lodino.Core.Safety;
 
-namespace Lodino.Core.Formats.Archive.Zip
+namespace Lodino.Core.Compression.Deflate
 {
     /// <summary>
     /// Compressor proprietário DEFLATE (RFC 1951) em C# puro.
@@ -409,66 +410,199 @@ namespace Lodino.Core.Formats.Archive.Zip
 
         #region API Pública de Compressão
 
-        public static byte[] Compress(byte[] rawData, ZipCompressionLevel level = ZipCompressionLevel.Optimal)
+        public static byte[] Compress(byte[] rawData, DeflateCompressionLevel level = DeflateCompressionLevel.Optimal)
         {
             if (rawData == null) throw new ArgumentNullException("rawData");
-            using (var ms = new MemoryStream())
+            using (var msIn = new MemoryStream(rawData, writable: false))
+            using (var msOut = new MemoryStream())
             {
-                Compress(rawData, ms, level);
-                return ms.ToArray();
+                CompressStream(msIn, msOut, level);
+                return msOut.ToArray();
             }
         }
 
-        public static void Compress(byte[] rawData, Stream outputStream, ZipCompressionLevel level = ZipCompressionLevel.Optimal)
+        public static byte[] Compress(byte[] rawData, ZipCompressionLevel level)
+        {
+            return Compress(rawData, (DeflateCompressionLevel)level);
+        }
+
+        public static void Compress(byte[] rawData, Stream outputStream, DeflateCompressionLevel level = DeflateCompressionLevel.Optimal)
         {
             if (rawData == null) throw new ArgumentNullException("rawData");
             if (outputStream == null) throw new ArgumentNullException("outputStream");
 
-            if (level == ZipCompressionLevel.Store || level == ZipCompressionLevel.Fast)
+            using (var msIn = new MemoryStream(rawData, writable: false))
             {
-                CompressStored(rawData, outputStream);
-            }
-            else
-            {
-                CompressOptimal(rawData, outputStream);
+                CompressStream(msIn, outputStream, level);
             }
         }
 
-        public static void Compress(Stream inputStream, Stream outputStream, ZipCompressionLevel level = ZipCompressionLevel.Optimal)
+        public static void Compress(byte[] rawData, Stream outputStream, ZipCompressionLevel level)
+        {
+            Compress(rawData, outputStream, (DeflateCompressionLevel)level);
+        }
+
+        public static void Compress(Stream inputStream, Stream outputStream, DeflateCompressionLevel level = DeflateCompressionLevel.Optimal)
+        {
+            CompressStream(inputStream, outputStream, level);
+        }
+
+        public static void Compress(Stream inputStream, Stream outputStream, ZipCompressionLevel level)
+        {
+            CompressStream(inputStream, outputStream, (DeflateCompressionLevel)level);
+        }
+
+        /// <summary>
+        /// Comprime um fluxo de dados em formato DEFLATE bruto (RFC 1951)
+        /// com uso estritamente O(1) de memória através de duplo-buffer de lookahead.
+        /// </summary>
+        public static void CompressStream(
+            Stream inputStream,
+            Stream outputStream,
+            DeflateCompressionLevel level = DeflateCompressionLevel.Optimal)
         {
             if (inputStream == null) throw new ArgumentNullException("inputStream");
             if (outputStream == null) throw new ArgumentNullException("outputStream");
 
-            byte[] data;
-            if (inputStream.CanSeek)
+            byte[] currentBuf = new byte[MaxBlockSize];
+            byte[] nextBuf = new byte[MaxBlockSize];
+            int currentLen = ReadBlock(inputStream, currentBuf, MaxBlockSize);
+
+            if (currentLen == 0)
             {
-                SecurityLimits.AssertZipEntrySize(inputStream.Length);
-                data = new byte[inputStream.Length];
-                int offset = 0;
-                int read;
-                while (offset < data.Length && (read = inputStream.Read(data, offset, data.Length - offset)) > 0)
+                // Fluxo vazio (0 bytes)
+                if (level == DeflateCompressionLevel.Store)
                 {
-                    offset += read;
+                    outputStream.WriteByte(0x01); // BFINAL = 1, BTYPE = 00
+                    outputStream.WriteByte(0x00); outputStream.WriteByte(0x00); // LEN = 0
+                    outputStream.WriteByte(0xFF); outputStream.WriteByte(0xFF); // NLEN = 0xFFFF
                 }
+                else
+                {
+                    var writer = new DeflateBitWriter(outputStream);
+                    writer.WriteBits(3, 3); // BFINAL = 1, BTYPE = 01
+                    writer.WriteBits(FixedLitReversed[256], FixedLitLens[256]);
+                    writer.Flush();
+                }
+                return;
+            }
+
+            var bitWriter = new DeflateBitWriter(outputStream);
+            var tokens = (level != DeflateCompressionLevel.Store) ? new Lz77TokenBuffer(MaxBlockSize) : null;
+            int[] head = (level != DeflateCompressionLevel.Store) ? new int[65536] : null;
+            int[] prev = (level != DeflateCompressionLevel.Store) ? new int[32768] : null;
+
+            while (true)
+            {
+                int nextLen = ReadBlock(inputStream, nextBuf, MaxBlockSize);
+                bool isFinal = (nextLen == 0);
+
+                if (level == DeflateCompressionLevel.Store)
+                {
+                    CompressBlockStored(currentBuf, 0, currentLen, bitWriter, isFinal);
+                }
+                else if (level == DeflateCompressionLevel.Fast)
+                {
+                    CompressBlockFixed(currentBuf, 0, currentLen, tokens, head, prev, bitWriter, isFinal);
+                }
+                else
+                {
+                    CompressBlockOptimal(currentBuf, 0, currentLen, tokens, head, prev, bitWriter, isFinal);
+                }
+
+                if (isFinal)
+                {
+                    bitWriter.Flush();
+                    break;
+                }
+
+                byte[] tmp = currentBuf;
+                currentBuf = nextBuf;
+                nextBuf = tmp;
+                currentLen = nextLen;
+            }
+        }
+
+        public static void CompressStream(Stream inputStream, Stream outputStream, ZipCompressionLevel level)
+        {
+            CompressStream(inputStream, outputStream, (DeflateCompressionLevel)level);
+        }
+
+        private static int ReadBlock(Stream stream, byte[] buffer, int maxCount)
+        {
+            int totalRead = 0;
+            while (totalRead < maxCount)
+            {
+                int read = stream.Read(buffer, totalRead, maxCount - totalRead);
+                if (read <= 0) break;
+                totalRead += read;
+            }
+            return totalRead;
+        }
+
+        private static void CompressBlockStored(byte[] buffer, int offset, int length, DeflateBitWriter writer, bool isFinal)
+        {
+            EmitStoredBlock(buffer, offset, length, writer, isFinal);
+        }
+
+        private static void CompressBlockFixed(byte[] buffer, int offset, int length, Lz77TokenBuffer tokens, int[] head, int[] prev, DeflateBitWriter writer, bool isFinal)
+        {
+            tokens.Clear();
+            for (int i = 0; i < 65536; i++) head[i] = -1;
+            RunLz77(buffer, offset, length, tokens, head, prev);
+            EmitFixedBlock(tokens, writer, isFinal);
+        }
+
+        private static void CompressBlockOptimal(
+            byte[] buffer, int offset, int blockSize,
+            Lz77TokenBuffer tokens, int[] head, int[] prev,
+            DeflateBitWriter writer, bool isFinal)
+        {
+            tokens.Clear();
+            for (int i = 0; i < 65536; i++) head[i] = -1;
+            RunLz77(buffer, offset, blockSize, tokens, head, prev);
+
+            int[] litLens, distLens, clLens;
+            List<int> rleSymbols, rleExtra, rleExtraBits;
+            int hlit, hdist, hclen;
+
+            PrepareDynamicTrees(tokens, out litLens, out distLens, out clLens,
+                out rleSymbols, out rleExtra, out rleExtraBits,
+                out hlit, out hdist, out hclen);
+
+            long costStored = CalculateStoredCost(blockSize, writer.BitCount);
+            long costFixed = CalculateFixedCost(tokens);
+            long costDynamic = CalculateDynamicCost(tokens, litLens, distLens, rleSymbols, rleExtraBits, clLens, hlit, hdist, hclen);
+
+            int chosenBType = 2; // Dynamic
+            long minCost = costDynamic;
+
+            if (costFixed < minCost)
+            {
+                chosenBType = 1;
+                minCost = costFixed;
+            }
+
+            if (costStored <= minCost && blockSize <= MaxBlockSize)
+            {
+                chosenBType = 0;
+                minCost = costStored;
+            }
+
+            if (chosenBType == 0)
+            {
+                EmitStoredBlock(buffer, offset, blockSize, writer, isFinal);
+            }
+            else if (chosenBType == 1)
+            {
+                EmitFixedBlock(tokens, writer, isFinal);
             }
             else
             {
-                using (var ms = new MemoryStream())
-                {
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    long total = 0;
-                    while ((read = inputStream.Read(buffer, 0, buffer.Length)) > 0)
-                    {
-                        total += read;
-                        SecurityLimits.AssertZipEntrySize(total);
-                        ms.Write(buffer, 0, read);
-                    }
-                    data = ms.ToArray();
-                }
+                EmitDynamicBlock(tokens, litLens, distLens, clLens,
+                    rleSymbols, rleExtra, rleExtraBits,
+                    hlit, hdist, hclen, writer, isFinal);
             }
-
-            Compress(data, outputStream, level);
         }
 
         #endregion

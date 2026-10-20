@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace Lodino.Core.Formats.Archive.Zip
+namespace Lodino.Core.Compression.Deflate
 {
     /// <summary>
     /// Escritor de fluxo de bits para codificação DEFLATE (RFC 1951).

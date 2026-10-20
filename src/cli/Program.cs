@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Lodino.Core.Api;
+using Lodino.Core.Formats.Archive.Gzip;
 using Lodino.Core.Registry;
 
 namespace Lodino.Cli
@@ -109,7 +110,7 @@ namespace Lodino.Cli
                             Console.WriteLine("Metadados detalhados:");
                             foreach (var kvp in info.Metadata)
                             {
-                                Console.WriteLine(string.Format("  - {0}: {1}", kvp.Key, kvp.Value));
+                                Console.WriteLine(string.Format("  - {0}: {1}", kvp.Key, GzipSecurity.SanitizeForConsole(kvp.Value)));
                             }
                         }
                         return 0;
@@ -246,12 +247,12 @@ namespace Lodino.Cli
                         Console.WriteLine(string.Format("  CONTEÚDO DO ARQUIVO ZIP: {0}", Path.GetFileName(zipFile)));
                         Console.WriteLine("========================================");
                         Console.WriteLine(string.Format("Total de entradas: {0}", reader.Entries.Count));
-                        if (!string.IsNullOrEmpty(reader.Comment)) Console.WriteLine("Comentário: " + reader.Comment);
+                        if (!string.IsNullOrEmpty(reader.Comment)) Console.WriteLine("Comentário: " + GzipSecurity.SanitizeForConsole(reader.Comment));
                         Console.WriteLine("----------------------------------------");
                         foreach (var e in reader.Entries)
                         {
                             Console.WriteLine(string.Format("{0,-45} {1,10} -> {2,10} [{3}]",
-                                e.Name, e.UncompressedSize.ToString("N0"), e.CompressedSize.ToString("N0"), e.Method));
+                                GzipSecurity.SanitizeForConsole(e.Name), e.UncompressedSize.ToString("N0"), e.CompressedSize.ToString("N0"), e.Method));
                         }
                     }
                     return 0;
@@ -404,7 +405,7 @@ namespace Lodino.Cli
                         Console.WriteLine(string.Format("Tamanho Comprimido: {0:N0} bytes", info.FileSizeBytes));
                         foreach (var kvp in info.Metadata)
                         {
-                            Console.WriteLine(string.Format("{0}: {1}", kvp.Key, kvp.Value));
+                            Console.WriteLine(string.Format("{0}: {1}", kvp.Key, GzipSecurity.SanitizeForConsole(kvp.Value)));
                         }
                     }
                     return 0;

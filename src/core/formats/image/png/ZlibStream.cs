@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using Lodino.Core.Checksums;
+using Lodino.Core.Compression.Deflate;
 using Lodino.Core.Errors;
 using Lodino.Core.Safety;
 

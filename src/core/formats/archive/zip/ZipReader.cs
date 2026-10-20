@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Lodino.Core.Errors;
-using Lodino.Core.Formats.Image.Png;
+using Lodino.Core.Checksums;
+using Lodino.Core.Compression.Deflate;
 using Lodino.Core.IO;
 using Lodino.Core.Safety;
+using Crc32 = Lodino.Core.Checksums.Crc32;
 
 namespace Lodino.Core.Formats.Archive.Zip
 {

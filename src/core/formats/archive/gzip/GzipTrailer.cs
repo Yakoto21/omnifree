@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using Lodino.Core.Errors;
-using Lodino.Core.Formats.Image.Png;
+using Lodino.Core.Compression.Deflate;
 
 namespace Lodino.Core.Formats.Archive.Gzip
 {

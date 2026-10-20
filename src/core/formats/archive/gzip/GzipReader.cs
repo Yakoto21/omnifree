@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Lodino.Core.Checksums;
+using Lodino.Core.Compression.Deflate;
 using Lodino.Core.Errors;
-using Lodino.Core.Formats.Image.Png;
 using Lodino.Core.IO;
 using Lodino.Core.Safety;
+using Crc32 = Lodino.Core.Checksums.Crc32;
 
 namespace Lodino.Core.Formats.Archive.Gzip
 {
@@ -326,6 +328,12 @@ namespace Lodino.Core.Formats.Archive.Gzip
             }
         }
 
+        /// <summary>
+        /// Realiza inspeção rápida O(1) do arquivo GZIP, lendo o cabeçalho do primeiro membro (índice 0)
+        /// e, se a stream for navegável (CanSeek), o trailer final. Não descomprime o fluxo DEFLATE nem enumera
+        /// membros intermediários em arquivos concatenados.
+        /// Para enumeração completa de todos os membros, utilize <see cref="InspectAllMembers(Stream)"/>.
+        /// </summary>
         public static List<GzipMemberInfo> InspectMembers(Stream inputStream)
         {
             if (inputStream == null) throw new ArgumentNullException("inputStream");
@@ -359,6 +367,17 @@ namespace Lodino.Core.Formats.Archive.Gzip
 
             members.Add(info);
             return members;
+        }
+
+        /// <summary>
+        /// Inspeciona exaustivamente todos os membros de um arquivo GZIP (simples ou concatenado),
+        /// processando o fluxo DEFLATE em memória O(1) descartando a saída (Stream.Null) e validando
+        /// todos os cabeçalhos, trailers, CRC-32 e contadores de bytes de cada membro.
+        /// </summary>
+        public static List<GzipMemberInfo> InspectAllMembers(Stream inputStream)
+        {
+            if (inputStream == null) throw new ArgumentNullException("inputStream");
+            return Decompress(inputStream, Stream.Null);
         }
     }
 }

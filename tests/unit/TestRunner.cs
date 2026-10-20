@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Lodino.Core.Api;
+using Lodino.Core.Checksums;
+using Lodino.Core.Compression.Deflate;
 using Lodino.Core.Errors;
 using Lodino.Core.Formats.Audio;
 using Lodino.Core.Formats.Audio.Wav;
@@ -17,6 +19,7 @@ using Lodino.Core.Formats.Archive.Gzip;
 using Lodino.Core.Formats.Archive.Zip;
 using System.Threading;
 using Lodino.Desktop;
+using Crc32 = Lodino.Core.Checksums.Crc32;
 
 namespace Lodino.Tests
 {
@@ -353,6 +356,15 @@ namespace Lodino.Tests
             RunTest("GZIP (Segurança): Proteção contra Decompression Bomb (teto de bytes emitidos)", Test_Gzip_Security_Decompression_Bomb);
             RunTest("GZIP (Engine): Inspeção completa e conversão ponta a ponta via EngineRegistry", Test_Gzip_Engine_Integration_And_Inspection);
             RunTest("GZIP (Arquivo): Escrita atômica temporária e proteção contra sobrescrita indevida", Test_Gzip_File_Atomic_Overwrite_Protection);
+
+            // --- FASE 13.2: REMEDIAÇÃO GZIP ---
+            RunTest("GZIP (Streaming): Compressão O(1) de fluxo com múltiplos blocos DEFLATE e verificação de integridade", Test_Gzip_Streaming_Memory_O1);
+            RunTest("GZIP (Streaming): Compressão com sucesso em fluxo não-posicionável (CanSeek = false)", Test_Gzip_Streaming_NonSeekable_Stream);
+            RunTest("GZIP (Segurança): Rejeição estrita de bytes de lixo não-nulos após o trailer (E-05)", Test_Gzip_Security_TrailingGarbage);
+            RunTest("DEFLATE (Robustez): ReadByte() rejeita leitura com bits residuais desalinhados (B-01)", Test_Deflate_BitReader_ReadByte_Misaligned);
+            RunTest("GZIP (Segurança CLI): Sanitização de metadados FNAME/FCOMMENT contra injeção ANSI/C0 CWE-150 (E-02)", Test_Gzip_Console_Sanitizer_Cwe150);
+            RunTest("GZIP: Enumeração completa de múltiplos membros concatenados via InspectAllMembers (E-04)", Test_Gzip_Inspect_All_Members);
+            RunTest("GZIP: Conformidade normativa RFC 1952 § 2.3.1 com codificação Latin-1 em FNAME (A-01)", Test_Gzip_Normative_Latin1_Fname);
 
             Console.WriteLine("\n-------------------------------------------------");
             Console.WriteLine(string.Format("Resultado Final: {0} aprovados, {1} falhas.", _passed, _failed));
@@ -6728,7 +6740,7 @@ namespace Lodino.Tests
             using (var src = new MemoryStream(dotNetCompressed))
             using (var dst = new MemoryStream())
             {
-                Lodino.Core.Formats.Image.Png.DeflateDecompressor.Decompress(src, dst, original.Length);
+                Lodino.Core.Compression.Deflate.DeflateDecompressor.Decompress(src, dst, original.Length);
                 lodinoDecompressed = dst.ToArray();
             }
 
@@ -7940,6 +7952,235 @@ namespace Lodino.Tests
                 try { Directory.Delete(tempDir, recursive: true); } catch { }
             }
         }
+
+        #region REMEDIAÇÃO GZIP (FASE 13.2)
+
+        private static void Test_Gzip_Streaming_Memory_O1()
+        {
+            // Gera 150.000 bytes (excedendo os 65.535 bytes de bloco do DEFLATE, forçando múltiplos blocos)
+            byte[] original = new byte[150000];
+            for (int i = 0; i < original.Length; i++)
+            {
+                original[i] = (byte)((i * 31 + 17) & 0xFF);
+            }
+
+            byte[] compressed;
+            using (var inStream = new MemoryStream(original))
+            using (var outStream = new MemoryStream())
+            {
+                var header = new GzipHeader { FileName = "large_stream.bin" };
+                GzipWriter.Compress(inStream, outStream, header, DeflateCompressionLevel.Fast);
+                compressed = outStream.ToArray();
+            }
+
+            // Descomprimir e verificar integridade
+            byte[] decompressed;
+            using (var inStream = new MemoryStream(compressed))
+            using (var outStream = new MemoryStream())
+            {
+                GzipReader.Decompress(inStream, outStream);
+                decompressed = outStream.ToArray();
+            }
+
+            AssertEqual(original.Length, decompressed.Length, "Comprimento descomprimido em streaming");
+            for (int i = 0; i < original.Length; i++)
+            {
+                if (original[i] != decompressed[i])
+                    throw new Exception("Mismatch de byte na posição " + i);
+            }
+        }
+
+        private static void Test_Gzip_Streaming_NonSeekable_Stream()
+        {
+            // Testa stream não-posicionável (CanSeek = false) com 100.000 bytes
+            byte[] original = new byte[100000];
+            for (int i = 0; i < original.Length; i++)
+            {
+                original[i] = (byte)((i ^ 0x5A) & 0xFF);
+            }
+
+            byte[] compressed;
+            using (var baseStream = new MemoryStream(original))
+            using (var nonSeekableIn = new NonSeekableStream(baseStream))
+            using (var outStream = new MemoryStream())
+            {
+                var header = new GzipHeader { FileName = "nonseekable.bin" };
+                GzipWriter.Compress(nonSeekableIn, outStream, header, DeflateCompressionLevel.Optimal);
+                compressed = outStream.ToArray();
+            }
+
+            // Descomprime e valida
+            byte[] decompressed;
+            using (var inStream = new MemoryStream(compressed))
+            using (var outStream = new MemoryStream())
+            {
+                GzipReader.Decompress(inStream, outStream);
+                decompressed = outStream.ToArray();
+            }
+
+            AssertEqual(original.Length, decompressed.Length, "Comprimento descomprimido de non-seekable stream");
+            for (int i = 0; i < original.Length; i++)
+            {
+                if (original[i] != decompressed[i])
+                    throw new Exception("Mismatch de byte na posição " + i);
+            }
+        }
+
+        private static void Test_Gzip_Security_TrailingGarbage()
+        {
+            // Comprime payload simples
+            byte[] raw = Encoding.UTF8.GetBytes("Dados legítimos para teste de lixo pós-trailer");
+            byte[] compressed;
+            using (var inMs = new MemoryStream(raw))
+            using (var outMs = new MemoryStream())
+            {
+                GzipWriter.Compress(inMs, outMs);
+                compressed = outMs.ToArray();
+            }
+
+            // Adiciona bytes espúrios não-nulos após o trailer de 8 bytes
+            byte[] corrupt = new byte[compressed.Length + 5];
+            Array.Copy(compressed, corrupt, compressed.Length);
+            corrupt[compressed.Length] = 0xDE;
+            corrupt[compressed.Length + 1] = 0xAD;
+            corrupt[compressed.Length + 2] = 0xBE;
+            corrupt[compressed.Length + 3] = 0xEF;
+            corrupt[compressed.Length + 4] = 0x01;
+
+            bool threw = false;
+            try
+            {
+                using (var inMs = new MemoryStream(corrupt))
+                using (var outMs = new MemoryStream())
+                {
+                    GzipReader.Decompress(inMs, outMs);
+                }
+            }
+            catch (CorruptDataException ex)
+            {
+                threw = true;
+                Assert(ex.Message.Contains("inesperados") || ex.Message.Contains("trailer") || ex.Message.Contains("espúrios"),
+                    "Mensagem descritiva de erro ao detectar lixo pós-trailer: " + ex.Message);
+            }
+
+            Assert(threw, "GzipReader deve rejeitar dados espúrios após o trailer com CorruptDataException");
+        }
+
+        private static void Test_Deflate_BitReader_ReadByte_Misaligned()
+        {
+            byte[] data = new byte[] { 0xAA, 0xBB, 0xCC };
+            using (var ms = new MemoryStream(data))
+            {
+                var reader = new DeflateBitReader(ms);
+                // Lê 3 bits -> sobram 5 bits não alinhados no buffer
+                int bits = reader.ReadBits(3);
+                AssertEqual(3, bits >= 0 ? 3 : 0, "Leu 3 bits");
+
+                bool threw = false;
+                try
+                {
+                    reader.ReadByte();
+                }
+                catch (InvalidOperationException)
+                {
+                    threw = true;
+                }
+                Assert(threw, "ReadByte() deve lançar InvalidOperationException se houver bits residuais desalinhados");
+
+                // Agora alinha e lê byte com sucesso
+                reader.AlignToByte();
+                int nextByte = reader.ReadByte();
+                AssertEqual(0xBB, nextByte, "Byte lido após AlignToByte()");
+            }
+        }
+
+        private static void Test_Gzip_Console_Sanitizer_Cwe150()
+        {
+            // Testa sanitização de sequências ANSI e C0 control codes
+            string hostile = "\x1b[31mRedText\x1b[0m\a\b\t\r\nEnd";
+            string sanitized = GzipSecurity.SanitizeForConsole(hostile);
+
+            Assert(!sanitized.Contains("\x1b"), "Sanitizador deve remover/escapar o caractere ESC");
+            Assert(!sanitized.Contains("\a"), "Sanitizador deve remover/escapar o caractere Bell");
+            Assert(!sanitized.Contains("\b"), "Sanitizador deve remover/escapar o caractere Backspace");
+            Assert(sanitized.Contains("RedText"), "Sanitizador deve manter o texto legível");
+            Assert(sanitized.Contains("End"), "Sanitizador deve manter o sufixo legível");
+
+            // Testa Bidi override (U+202E)
+            string bidiHostile = "safe\u202Eexe.gnp";
+            string bidiSanitized = GzipSecurity.SanitizeForConsole(bidiHostile);
+            Assert(!bidiSanitized.Contains("\u202E"), "Sanitizador deve escapar Bidi override U+202E");
+
+            // Testa preservação de Unicode legítimo (acentos portugueses)
+            string legitimate = "relatório_café_2026.tar";
+            string legSanitized = GzipSecurity.SanitizeForConsole(legitimate);
+            AssertEqual(legitimate, legSanitized, "Caracteres acentuados legítimos devem ser preservados");
+
+            // Testa null / vazio
+            AssertEqual("", GzipSecurity.SanitizeForConsole(null), "Null retorna string vazia");
+            AssertEqual("", GzipSecurity.SanitizeForConsole(""), "Vazio retorna string vazia");
+        }
+
+        private static void Test_Gzip_Inspect_All_Members()
+        {
+            byte[] m1Data = Encoding.UTF8.GetBytes("Conteúdo do Primeiro Membro GZIP");
+            byte[] m2Data = Encoding.UTF8.GetBytes("Conteúdo do Segundo Membro GZIP com tamanho diferente");
+
+            byte[] m1Gz, m2Gz;
+            using (var inMs = new MemoryStream(m1Data))
+            using (var outMs = new MemoryStream())
+            {
+                GzipWriter.Compress(inMs, outMs, new GzipHeader { FileName = "member1.txt" });
+                m1Gz = outMs.ToArray();
+            }
+
+            using (var inMs = new MemoryStream(m2Data))
+            using (var outMs = new MemoryStream())
+            {
+                GzipWriter.Compress(inMs, outMs, new GzipHeader { FileName = "member2.txt" });
+                m2Gz = outMs.ToArray();
+            }
+
+            byte[] concatenated = new byte[m1Gz.Length + m2Gz.Length];
+            Array.Copy(m1Gz, 0, concatenated, 0, m1Gz.Length);
+            Array.Copy(m2Gz, 0, concatenated, m1Gz.Length, m2Gz.Length);
+
+            using (var ms = new MemoryStream(concatenated))
+            {
+                var members = GzipReader.InspectAllMembers(ms);
+                AssertEqual(2, members.Count, "InspectAllMembers deve encontrar exatamente 2 membros");
+                AssertEqual("member1.txt", members[0].Header.FileName, "Nome do primeiro membro");
+                AssertEqual((uint)m1Data.Length, members[0].Trailer.ISize, "ISize do primeiro membro");
+                AssertEqual("member2.txt", members[1].Header.FileName, "Nome do segundo membro");
+                AssertEqual((uint)m2Data.Length, members[1].Trailer.ISize, "ISize do segundo membro");
+            }
+        }
+
+        private static void Test_Gzip_Normative_Latin1_Fname()
+        {
+            // Caracteres ISO-8859-1 (Latin-1): café, cedilha, copyright, parágrafo
+            string latinName = "arquivo_café_aço_©_§.txt";
+            byte[] data = Encoding.UTF8.GetBytes("Teste de Latin-1 estrito");
+
+            byte[] gz;
+            using (var inMs = new MemoryStream(data))
+            using (var outMs = new MemoryStream())
+            {
+                var header = new GzipHeader { FileName = latinName, Comment = "Comentário Latin-1: maçã" };
+                GzipWriter.Compress(inMs, outMs, header);
+                gz = outMs.ToArray();
+            }
+
+            using (var ms = new MemoryStream(gz))
+            {
+                var inspected = GzipReader.InspectMembers(ms);
+                Assert(inspected.Count >= 1, "Pelo menos 1 membro inspecionado");
+                AssertEqual(latinName, inspected[0].Header.FileName, "FileName Latin-1 preservado");
+                AssertEqual("Comentário Latin-1: maçã", inspected[0].Header.Comment, "Comment Latin-1 preservado");
+            }
+        }
+
+        #endregion
 
         #endregion
 

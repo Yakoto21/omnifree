@@ -3,7 +3,7 @@ using System.IO;
 using Lodino.Core.Errors;
 using Lodino.Core.Safety;
 
-namespace Lodino.Core.Formats.Image.Png
+namespace Lodino.Core.Compression.Deflate
 {
     /// <summary>
     /// Descompressor proprietário de blocos DEFLATE (RFC 1951).

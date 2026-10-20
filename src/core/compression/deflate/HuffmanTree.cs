@@ -1,7 +1,7 @@
 using System;
 using Lodino.Core.Errors;
 
-namespace Lodino.Core.Formats.Image.Png
+namespace Lodino.Core.Compression.Deflate
 {
     /// <summary>
     /// Árvore canônica de Huffman para descompressão DEFLATE (RFC 1951).

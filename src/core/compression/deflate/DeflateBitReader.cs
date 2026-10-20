@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using Lodino.Core.Errors;
 
-namespace Lodino.Core.Formats.Image.Png
+namespace Lodino.Core.Compression.Deflate
 {
     /// <summary>
     /// Leitor de fluxo de bits para descompressão DEFLATE (RFC 1951).
@@ -82,6 +82,11 @@ namespace Lodino.Core.Formats.Image.Png
 
         public int TryReadByte()
         {
+            if (_bitsCount % 8 != 0)
+            {
+                throw new InvalidOperationException("Não é possível ler byte alinhado de DeflateBitReader enquanto houver bits residuais desalinhados. Chame AlignToByte() primeiro.");
+            }
+
             if (_bitsCount >= 8)
             {
                 byte b = (byte)(_bitBuffer & 0xFF);
@@ -100,6 +105,11 @@ namespace Lodino.Core.Formats.Image.Png
 
         public byte ReadByte()
         {
+            if (_bitsCount % 8 != 0)
+            {
+                throw new InvalidOperationException("Não é possível ler byte alinhado de DeflateBitReader enquanto houver bits residuais desalinhados. Chame AlignToByte() primeiro.");
+            }
+
             if (_bitsCount >= 8)
             {
                 byte b = (byte)(_bitBuffer & 0xFF);

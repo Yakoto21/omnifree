@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using Lodino.Core.Api;
+using Lodino.Core.Compression.Deflate;
 using Lodino.Core.Errors;
 using Lodino.Core.Formats.Archive.Zip;
 
@@ -102,13 +103,16 @@ namespace Lodino.Core.Formats.Archive.Gzip
                         info.Metadata["HeaderCrc16"] = string.Format("0x{0:X4}", first.Header.HeaderCrc.Value);
                     }
 
-                    info.Metadata["TrailerCRC32"] = string.Format("0x{0:X8}", first.Trailer.Crc32);
-                    info.Metadata["UncompressedISize"] = string.Format("{0:N0} bytes (mod 2^32)", first.Trailer.ISize);
-
-                    if (inputStream.CanSeek && first.Trailer.ISize > 0)
+                    if (inputStream.CanSeek && inputStream.Length >= 18)
                     {
-                        double ratio = (inputStream.Length * 100.0) / first.Trailer.ISize;
-                        info.Metadata["CompressionRatio"] = string.Format("{0:F1}%", ratio);
+                        info.Metadata["TrailerCRC32"] = string.Format("0x{0:X8}", first.Trailer.Crc32);
+                        info.Metadata["UncompressedISize"] = string.Format("{0:N0} bytes (mod 2^32)", first.Trailer.ISize);
+
+                        if (first.Trailer.ISize > 0)
+                        {
+                            double ratio = (inputStream.Length * 100.0) / first.Trailer.ISize;
+                            info.Metadata["CompressionRatio"] = string.Format("{0:F1}%", ratio);
+                        }
                     }
                 }
             }

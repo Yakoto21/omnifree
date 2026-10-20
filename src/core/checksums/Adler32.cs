@@ -1,6 +1,6 @@
 using System;
 
-namespace Lodino.Core.Formats.Image.Png
+namespace Lodino.Core.Checksums
 {
     /// <summary>
     /// Implementação original do algoritmo de checksum Adler-32 (RFC 1950).

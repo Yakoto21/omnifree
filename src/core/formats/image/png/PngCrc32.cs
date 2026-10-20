@@ -1,5 +1,5 @@
 using System;
-using Lodino.Core.IO;
+using Lodino.Core.Checksums;
 
 namespace Lodino.Core.Formats.Image.Png
 {

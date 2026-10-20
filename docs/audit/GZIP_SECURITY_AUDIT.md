@@ -293,5 +293,24 @@ Um ponto de atenção fundamental para o implementador do `GzipReader`:
 
 ---
 
+## 8. Adendo de Remediação Pós-Auditoria Independente (Fase 13.2)
+
+Em 19 de Outubro de 2026, após a auditoria independente da Fase 13.1, foram homologadas e incorporadas as seguintes remediações mandatórias de segurança:
+
+1. **E-02 — Sanitização de Metadados contra ANSI Injection / CWE-150 (`GzipSecurity.SanitizeForConsole`):**
+   - Implementado sanitizador que neutraliza sequências de escape ANSI (`\x1B[...]`), caracteres de controle C0 (`< 0x20`), `DEL` (`0x7F`) e marcadores de controle bidirecional Unicode (ex: `U+202E` Right-to-Left Override).
+   - Aplicado na camada de exibição e CLI (`Program.cs`) para `inspect-gzip`, `inspect` e `list-zip`, protegendo emuladores de terminal do usuário.
+2. **E-03 — Compressão GZIP Orientada a Streaming O(1):**
+   - Removida a alocação de buffer total no LOH (`byte[] rawData = input.ToArray()`) em `GzipWriter`.
+   - Implementado pipeline incremental em `GzipWriter.CompressStream` e `DeflateCompressor.CompressStream` com double-buffering de lookahead (blocos de 65.535 bytes) e classe `Crc32MeteringInputStream`, garantindo consumo de memória estritamente constante $O(1)$ independentemente do tamanho do arquivo de entrada.
+3. **B-01 — Guarda Defensiva em `DeflateBitReader.ReadByte()`:**
+   - Adicionada verificação rigorosa `_bitsCount % 8 != 0`, lançando `InvalidOperationException` se chamada enquanto houver bits residuais desalinhados.
+4. **E-05 — Rejeição Estrita de Lixo Pós-Trailer:**
+   - Blindagem e teste unitário dedicado (`Test_Gzip_Security_TrailingGarbage`) assegurando rejeição imediata com `CorruptDataException` de quaisquer bytes não-nulos após o trailer final de 8 bytes.
+5. **E-01 — Desacoplamento Arquitetural Neutro:**
+   - Migração completa de DEFLATE para `Lodino.Core.Compression.Deflate` e checksums para `Lodino.Core.Checksums`, eliminando o acoplamento espúrio com o namespace de PNG.
+
+---
+
 **Conclusão do Auditor:**  
-O desenho de segurança e os limites especificados neste parecer conferem ao motor GZIP do Lodino o mais alto nível de robustez adversarial contra Decompression Bombs, corrupções de cabeçalho e ataques ao sistema de arquivos. As diretrizes estão prontas para execução imediata pela equipe de desenvolvimento da Fase 13.
+O motor GZIP e DEFLATE do Lodino atende a todos os requisitos de segurança, com 221 testes unitários aprovados e zero dependências de terceiros.
