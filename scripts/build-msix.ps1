@@ -34,6 +34,8 @@ $makeAppxCandidates = @(
     "${env:ProgramFiles(x86)}\Windows Kits\10\App Certification Kit\makeappx.exe",
     "${env:ProgramFiles}\Windows Kits\10\bin\10.0.22621.0\x64\makeappx.exe",
     "${env:ProgramFiles}\Windows Kits\10\bin\x64\makeappx.exe",
+    "${env:LOCALAPPDATA}\Programs\Windows Kits\10\bin\10.0.22621.0\x64\makeappx.exe",
+    "${env:LOCALAPPDATA}\Programs\Windows Kits\10\bin\x64\makeappx.exe",
     "${env:ProgramFiles(x86)}\Windows Kits\8.1\bin\x64\makeappx.exe"
 )
 
@@ -65,7 +67,9 @@ $signToolCandidates = @(
     "signtool.exe",
     "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe",
     "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.19041.0\x64\signtool.exe",
-    "${env:ProgramFiles(x86)}\Windows Kits\10\bin\x64\signtool.exe"
+    "${env:ProgramFiles(x86)}\Windows Kits\10\bin\x64\signtool.exe",
+    "${env:LOCALAPPDATA}\Programs\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe",
+    "${env:LOCALAPPDATA}\Programs\Windows Kits\10\bin\x64\signtool.exe"
 )
 $signToolPath = $null
 $pathSign = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
