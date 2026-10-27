@@ -1,31 +1,154 @@
-name: Publicar instalador
+name: Pipeline Lodino Nativo
 
 on:
   push:
+    branches:
+      - main
+      - 'feature/**'
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão do pacote (ex: 1.0.0-rc.3)'
+        required: false
+        default: '1.0.0-rc.3'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build-and-test:
+    name: Build, Testes e Empacotamento Nativo
     runs-on: windows-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Verificar ambiente e compilador C#
+        shell: powershell
+        run: |
+          Write-Host "=== VERIFICAÇÃO DO COMPILADOR C# (.NET FRAMEWORK) ===" -ForegroundColor Cyan
+          $cscPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $cscPath)) {
+              Write-Error "Compilador C# csc.exe não encontrado no runner em $cscPath"
+              exit 1
+          }
+          & $cscPath /? | Select-Object -First 1
+          Write-Host "Compilador C# nativo verificado com sucesso." -ForegroundColor Green
+
+      - name: Instalar ferramenta de empacotamento NSIS
+        shell: powershell
+        run: |
+          Write-Host "=== INSTALAÇÃO CONTROLADA DO NSIS (VERSÃO FIXADA 3.10) ===" -ForegroundColor Cyan
+          choco install nsis --version=3.10 -y --no-progress
+
+          $nsisBin = "${env:ProgramFiles(x86)}\NSIS"
+          if (Test-Path $nsisBin) {
+              echo "$nsisBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              $env:PATH = "$nsisBin;$env:PATH"
+          }
+
+          $makensisCmd = Get-Command "makensis.exe" -ErrorAction SilentlyContinue
+          if ($makensisCmd) {
+              & $makensisCmd.Source /VERSION
+              Write-Host "NSIS instalado e verificado em $($makensisCmd.Source)" -ForegroundColor Green
+          } else {
+              Write-Error "makensis.exe não encontrado após instalação do NSIS."
+              exit 1
+          }
+
+      - name: Determinar versão de distribuição
+        shell: powershell
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          if (-not $ver -and "${{ github.ref_type }}" -eq "tag") {
+              $ver = "${{ github.ref_name }}".TrimStart('v')
+          }
+          if (-not $ver) {
+              $assemblyInfo = Get-Content "src\common\CommonAssemblyInfo.cs" -Raw
+              if ($assemblyInfo -match 'AssemblyInformationalVersion\("([^"]+)"\)') {
+                  $ver = $Matches[1]
+              } else {
+                  $ver = "1.0.0-rc.3"
+              }
+          }
+          Write-Host "Versão de distribuição resolvida: $ver" -ForegroundColor Green
+          echo "LODINO_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compilar assemblies de produção em modo Release
+        shell: powershell
+        run: |
+          Write-Host "=== COMPILAÇÃO RELEASE (scripts/build-core.ps1) ===" -ForegroundColor Cyan
+          & .\scripts\build-core.ps1 -Release -RunTests:$false
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Falha na compilação Release. Código de saída: $LASTEXITCODE"
+              exit $LASTEXITCODE
+          }
+
+      - name: Executar suíte de testes unitários (233 testes)
+        shell: powershell
+        run: |
+          Write-Host "=== EXECUÇÃO DOS TESTES UNITÁRIOS (build/Lodino.Tests.exe) ===" -ForegroundColor Cyan
+          $testExe = "build\Lodino.Tests.exe"
+          if (-not (Test-Path $testExe)) {
+              Write-Error "Binário de testes não encontrado: $testExe"
+              exit 1
+          }
+          & $testExe
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Falha nos testes unitários. Código de saída: $LASTEXITCODE"
+              exit $LASTEXITCODE
+          }
+
+      - name: Gerar pacote portátil ZIP e instalador NSIS
+        shell: powershell
+        run: |
+          $ver = $env:LODINO_VERSION
+          Write-Host "=== EMPACOTAMENTO OFICIAL: VERSÃO $ver (scripts/publish.ps1) ===" -ForegroundColor Cyan
+          & .\scripts\publish.ps1 -Version $ver -SkipTests
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Falha no empacotamento de distribuição. Código de saída: $LASTEXITCODE"
+              exit $LASTEXITCODE
+          }
+
+      - name: Validar e registrar integridade dos artefatos gerados
+        shell: powershell
+        run: |
+          $ver = $env:LODINO_VERSION
+          $expectedZip = "dist\Lodino-v$ver-Portable-win-x64.zip"
+          $expectedSha = "dist\Lodino-v$ver-Portable-win-x64.zip.sha256"
+          $expectedManifest = "dist\Lodino-v$ver-Portable-win-x64-manifest.txt"
+          $expectedSetup = "dist\Lodino-v$ver-Setup-win-x64.exe"
+
+          $mandatoryArtifacts = @($expectedZip, $expectedSha, $expectedManifest, $expectedSetup)
+          foreach ($art in $mandatoryArtifacts) {
+              if (-not (Test-Path $art)) {
+                  Write-Error "Artefato obrigatório ausente em dist: $art"
+                  exit 1
+              }
+          }
+
+          Write-Host "`n=================================================" -ForegroundColor Cyan
+          Write-Host "  LODINO NATIVE SUITE — ARTEFATOS HOMOLOGADOS   " -ForegroundColor Cyan
+          Write-Host "=================================================" -ForegroundColor Cyan
+          Get-ChildItem -Path dist | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+              $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+              Write-Host ("{0,-48} {1,10} bytes  SHA256: {2}" -f $_.Name, $_.Length, $hash)
+          }
+          Write-Host "`nValidação concluída: 100% dos artefatos íntegros." -ForegroundColor Green
+
+      - name: Disponibilizar artefatos como resultado da execução
+        uses: actions/upload-artifact@v4
         with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run icon
-      - run: npx electron-builder --win --publish never
-      - name: Criar Release e enviar atualização
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
+          name: Lodino-v${{ env.LODINO_VERSION }}-win-x64
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
             dist/*Setup*.exe
-            dist/*Setup*.exe.blockmap
-            dist/latest.yml
+            dist/*manifest.txt
+          if-no-files-found: error

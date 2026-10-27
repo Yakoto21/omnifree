@@ -313,6 +313,8 @@ namespace Lodino.Core.Formats.Audio
         /// </summary>
         public void ApplyGain(double gain)
         {
+            if (double.IsNaN(gain) || double.IsInfinity(gain))
+                throw new ArgumentOutOfRangeException("gain", "O ganho deve ser um número finito.");
             if (gain == 1.0) return;
 
             for (int c = 0; c < _channels; c++)

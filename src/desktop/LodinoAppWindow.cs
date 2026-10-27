@@ -490,9 +490,21 @@ namespace Lodino.Desktop
         private void OnCommand(IntPtr wParam, IntPtr lParam)
         {
             int id = (int)(wParam.ToInt64() & 0xFFFF);
+            int code = (int)((wParam.ToInt64() >> 16) & 0xFFFF);
 
             switch (id)
             {
+                case ID_LST_QUEUE:
+                    if (code == NativeMethods.LBN_SELCHANGE)
+                    {
+                        OnQueueSelectionChanged();
+                    }
+                    else if (code == NativeMethods.LBN_DBLCLK)
+                    {
+                        OnQueueItemDoubleClicked();
+                    }
+                    break;
+
                 case ID_BTN_ADD_FILES:
                     ShowAddFilesDialog();
                     break;
@@ -588,7 +600,91 @@ namespace Lodino.Desktop
             return result;
         }
 
-        private void RemoveSelectedQueueItem()
+        private void OnQueueSelectionChanged()
+
+        {
+
+            int sel = (int)NativeMethods.SendMessage(_hLstQueue, NativeMethods.LB_GETCURSEL, IntPtr.Zero, IntPtr.Zero);
+
+            if (sel < 0) return;
+
+            var jobs = _manager.Jobs;
+
+            if (sel >= jobs.Count) return;
+
+var job = jobs[sel];
+
+            if (job.Status == JobStatus.Failed)
+
+            {
+
+                NativeMethods.SetWindowText(_hLblStatus, string.Format("Falha [{0}]: {1}", job.FileName, job.ErrorMessage));
+
+            }
+
+            else if (job.Status == JobStatus.Completed)
+
+            {
+
+                NativeMethods.SetWindowText(_hLblStatus, string.Format("Concluído: {0} ({1}) salvo em {2}",
+
+                    job.FileName, job.FormatSize(job.OutputSizeBytes), job.DestinationPath));
+
+            }
+
+            else if (job.Status == JobStatus.Processing)
+
+            {
+
+                NativeMethods.SetWindowText(_hLblStatus, string.Format("Processando: {0} ({1}%)", job.FileName, job.ProgressPercent));
+
+            }
+
+            else if (job.Status == JobStatus.Queued)
+
+            {
+
+                NativeMethods.SetWindowText(_hLblStatus, string.Format("Na fila: {0} ({1})", job.FileName, job.FormatSize(job.SourceSizeBytes)));
+
+            }
+
+        }
+
+private void OnQueueItemDoubleClicked()
+
+        {
+
+            int sel = (int)NativeMethods.SendMessage(_hLstQueue, NativeMethods.LB_GETCURSEL, IntPtr.Zero, IntPtr.Zero);
+
+            if (sel < 0) return;
+
+            var jobs = _manager.Jobs;
+
+            if (sel >= jobs.Count) return;
+
+var job = jobs[sel];
+
+            if (job.Status == JobStatus.Failed && !string.IsNullOrEmpty(job.ErrorMessage))
+
+            {
+
+                NativeMethods.MessageBox(_hWnd, job.ErrorMessage, "Detalhes da Falha — " + job.FileName, 0x10 /* MB_ICONERROR */);
+
+            }
+
+            else if (job.Status == JobStatus.Completed && !string.IsNullOrEmpty(job.DestinationPath) && File.Exists(job.DestinationPath))
+
+            {
+
+                string arg = string.Format("/select,\"{0}\"", job.DestinationPath);
+
+                NativeMethods.ShellExecute(IntPtr.Zero, "open", "explorer.exe", arg, null, 1);
+
+            }
+
+        }
+
+private void RemoveSelectedQueueItem()
         {
             int sel = (int)NativeMethods.SendMessage(_hLstQueue, NativeMethods.LB_GETCURSEL, IntPtr.Zero, IntPtr.Zero);
             if (sel >= 0)

@@ -13,10 +13,11 @@ namespace Lodino.Desktop
     /// Gerenciador assíncrono e thread-safe da fila de conversões da aplicação desktop.
     /// Conecta a interface gráfica com os motores nativos do Lodino.Core.
     /// </summary>
-    public class ConversionManager
+    public class ConversionManager : IDisposable
     {
         private readonly List<ConversionJob> _jobs;
         private readonly object _lock = new object();
+        private readonly ManualResetEvent _batchFinishedEvent = new ManualResetEvent(true);
         private int _nextId = 1;
         private volatile bool _isRunning = false;
         private volatile bool _cancelRequested = false;
@@ -169,6 +170,7 @@ namespace Lodino.Desktop
 
                 _isRunning = true;
                 _cancelRequested = false;
+                _batchFinishedEvent.Reset();
 
                 // Atualiza formato e parâmetros se fornecidos
                 foreach (var job in _jobs)
@@ -206,9 +208,21 @@ namespace Lodino.Desktop
                 }
             }
 
-            Log("Iniciando lote de conversões...");
-            ThreadPool.QueueUserWorkItem(ProcessBatchWorker, outputDirectory);
-            return true;
+            try
+            {
+                Log("Iniciando lote de conversões...");
+                ThreadPool.QueueUserWorkItem(ProcessBatchWorker, outputDirectory);
+                return true;
+            }
+            catch
+            {
+                lock (_lock)
+                {
+                    _isRunning = false;
+                }
+                _batchFinishedEvent.Set();
+                throw;
+            }
         }
 
         public void Cancel()
@@ -292,6 +306,8 @@ namespace Lodino.Desktop
                 {
                     NativeMethods.PostMessage(_targetWindow, NativeMethods.WM_APP_BATCH_FINISH, (IntPtr)success, (IntPtr)failed);
                 }
+
+                _batchFinishedEvent.Set();
             }
         }
 
@@ -304,6 +320,13 @@ namespace Lodino.Desktop
 
             try
             {
+                if (job.SourcePath != null && job.SourcePath.Length >= 260)
+                {
+                    throw new PathTooLongException(string.Format(
+                        "O caminho do arquivo de entrada ({0} caracteres) excede o limite de 260 caracteres suportado pelo sistema operacional. Mova o arquivo para uma pasta com caminho mais curto.",
+                        job.SourcePath.Length));
+                }
+
                 if (!File.Exists(job.SourcePath))
                 {
                     throw new FileNotFoundException("Arquivo de entrada não encontrado.", job.SourcePath);
@@ -401,8 +424,8 @@ namespace Lodino.Desktop
             catch (Exception ex)
             {
                 job.Status = JobStatus.Failed;
-                job.ErrorMessage = ex.Message;
-                Log(string.Format("Erro ao converter {0}: {1}", job.FileName, ex.Message));
+                job.ErrorMessage = FormatActionableErrorMessage(ex);
+                Log(string.Format("Erro ao converter {0}: {1}", job.FileName, job.ErrorMessage));
             }
             finally
             {
@@ -459,7 +482,133 @@ namespace Lodino.Desktop
             return Path.Combine(directory, string.Format("{0}_{1}{2}", baseName, Guid.NewGuid().ToString("N").Substring(0, 8), extension));
         }
 
-        public static bool CanConvert(string sourceFormat, string targetFormat)
+        public static string FormatActionableErrorMessage(Exception ex)
+
+        {
+
+            if (ex == null) return "Erro desconhecido.";
+
+if (ex is UnauthorizedAccessException)
+
+            {
+
+                return string.Format(
+
+                    "Acesso negado: Sem permissão para ler o arquivo de entrada ou gravar no diretório de destino. Verifique as permissões de acesso da pasta. (Detalhes: {0})",
+
+                    ex.Message);
+
+            }
+
+if (ex is PathTooLongException)
+
+            {
+
+                return string.Format(
+
+                    "Caminho muito longo: O caminho do arquivo ou diretório excede o limite suportado pelo sistema operacional (260 caracteres). Mova o arquivo para uma pasta com caminho mais curto. (Detalhes: {0})",
+
+                    ex.Message);
+
+            }
+
+if (ex is FileNotFoundException)
+
+            {
+
+                return string.Format(
+
+                    "Arquivo não encontrado: O arquivo de entrada não existe ou foi movido durante o processamento. (Detalhes: {0})",
+
+                    ex.Message);
+
+            }
+
+if (ex is DirectoryNotFoundException)
+
+            {
+
+                return string.Format(
+
+                    "Diretório não encontrado: O diretório informado não foi localizado. (Detalhes: {0})",
+
+                    ex.Message);
+
+            }
+
+if (ex is IOException)
+
+            {
+
+                int hr = System.Runtime.InteropServices.Marshal.GetHRForException(ex);
+
+                string msg = ex.Message ?? string.Empty;
+
+if (hr == unchecked((int)0x80070020) || hr == unchecked((int)0x80070021) ||
+
+                    msg.IndexOf("being used by another process", StringComparison.OrdinalIgnoreCase) >= 0 ||
+
+                    msg.IndexOf("usado por outro processo", StringComparison.OrdinalIgnoreCase) >= 0)
+
+                {
+
+                    return string.Format(
+
+                        "Arquivo em uso: O arquivo está bloqueado por outro aplicativo (ex.: visualizador ou editor). Feche o programa que está utilizando o arquivo e tente novamente. (Detalhes: {0})",
+
+                        msg);
+
+                }
+
+if (hr == unchecked((int)0x80070070) || hr == unchecked((int)0x80070027) ||
+
+                    msg.IndexOf("espaço suficiente no disco", StringComparison.OrdinalIgnoreCase) >= 0 ||
+
+                    msg.IndexOf("not enough space on the disk", StringComparison.OrdinalIgnoreCase) >= 0)
+
+                {
+
+                    return string.Format(
+
+                        "Espaço em disco insuficiente: Não há espaço disponível na unidade de destino para concluir a conversão. (Detalhes: {0})",
+
+                        msg);
+
+                }
+
+return string.Format("Erro de E/S: {0}", msg);
+
+            }
+
+if (ex is UnsupportedFormatException)
+
+            {
+
+                return "Formato não suportado: " + ex.Message;
+
+            }
+
+if (ex is CorruptDataException)
+
+            {
+
+                return "Arquivo corrompido: " + ex.Message;
+
+            }
+
+if (ex is PathSecurityException)
+
+            {
+
+                return "Violação de segurança de caminho: " + ex.Message;
+
+            }
+
+return ex.Message;
+
+        }
+
+public static bool CanConvert(string sourceFormat, string targetFormat)
         {
             if (string.IsNullOrEmpty(sourceFormat) || string.IsNullOrEmpty(targetFormat)) return false;
             string src = sourceFormat.Trim().ToLowerInvariant().TrimStart('.');
@@ -506,6 +655,7 @@ namespace Lodino.Desktop
                 if (_jobs.Count == 0) return;
                 _isRunning = true;
                 _cancelRequested = false;
+                _batchFinishedEvent.Reset();
 
                 foreach (var job in _jobs)
                 {
@@ -541,6 +691,42 @@ namespace Lodino.Desktop
             }
 
             ProcessBatchWorker(outputDirectory);
+        }
+
+        /// <summary>
+        /// Aguarda a finalização ou encerramento do lote em execução até o tempo limite especificado.
+        /// Retorna true se o lote finalizou dentro do tempo limite; caso contrário, false.
+        /// </summary>
+        public bool WaitForBatch(int timeoutMilliseconds = -1)
+        {
+            return _batchFinishedEvent.WaitOne(timeoutMilliseconds);
+        }
+
+        /// <summary>
+        /// Solicita o cancelamento cooperativo e aguarda a finalização do worker e liberação de recursos.
+        /// Não bloqueia chamadas concorrentes após a liberação.
+        /// </summary>
+        public bool CancelAndWait(int timeoutMilliseconds = 5000)
+        {
+            Cancel();
+            return WaitForBatch(timeoutMilliseconds);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_batchFinishedEvent != null)
+                {
+                    _batchFinishedEvent.Close();
+                }
+            }
         }
     }
 }

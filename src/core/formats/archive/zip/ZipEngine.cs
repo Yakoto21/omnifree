@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using Lodino.Core.Api;
 using Lodino.Core.Errors;
+using Lodino.Core.IO;
 
 namespace Lodino.Core.Formats.Archive.Zip
 {
@@ -161,15 +162,9 @@ namespace Lodino.Core.Formats.Archive.Zip
             // Operação de COMPACTAÇÃO: arquivo/diretório -> zip
             if (tgt == "zip")
             {
-                string zipName;
-                if (isInputDirectory)
-                {
-                    zipName = new DirectoryInfo(request.InputPath).Name + ".zip";
-                }
-                else
-                {
-                    zipName = Path.GetFileNameWithoutExtension(request.InputPath) + ".zip";
-                }
+                string baseName = isInputDirectory
+                    ? new DirectoryInfo(request.InputPath).Name
+                    : Path.GetFileNameWithoutExtension(request.InputPath);
 
                 string targetDir = request.OutputDirectory;
                 if (string.IsNullOrEmpty(targetDir))
@@ -184,7 +179,16 @@ namespace Lodino.Core.Formats.Archive.Zip
                     Directory.CreateDirectory(targetDir);
                 }
 
-                string targetZipFile = Path.Combine(targetDir, zipName);
+                string targetZipFile = SafeFileWriter.GetUniqueOutputPath(targetDir, baseName, "zip");
+
+                string fullTarget = Path.GetFullPath(targetZipFile);
+                string fullInput = Path.GetFullPath(request.InputPath);
+                if (string.Equals(fullTarget, fullInput, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new PathSecurityException(string.Format(
+                        "O arquivo ZIP de destino não pode ser idêntico ao arquivo de entrada: '{0}'.",
+                        request.InputPath));
+                }
 
                 ZipCompressionLevel level = ZipCompressionLevel.Optimal;
                 string levelSetting;
@@ -211,18 +215,36 @@ namespace Lodino.Core.Formats.Archive.Zip
                 }
 
                 long totalBytes = 0;
-                using (var writer = new ZipWriter(targetZipFile))
+                try
                 {
-                    if (isInputDirectory)
+                    using (var writer = new ZipWriter(targetZipFile))
                     {
-                        writer.AddDirectoryRecursive(request.InputPath, "", level);
+                        if (isInputDirectory)
+                        {
+                            writer.AddDirectoryRecursive(request.InputPath, "", level);
+                        }
+                        else
+                        {
+                            writer.AddFile(request.InputPath, Path.GetFileName(request.InputPath), level);
+                        }
+                        writer.Finish();
+                        totalBytes = new FileInfo(targetZipFile).Length;
                     }
-                    else
+                }
+                catch
+                {
+                    try
                     {
-                        writer.AddFile(request.InputPath, Path.GetFileName(request.InputPath), level);
+                        if (File.Exists(targetZipFile))
+                        {
+                            File.Delete(targetZipFile);
+                        }
                     }
-                    writer.Finish();
-                    totalBytes = new FileInfo(targetZipFile).Length;
+                    catch
+                    {
+                        // Supressão defensiva de falha secundária de limpeza
+                    }
+                    throw;
                 }
 
                 if (onProgress != null) onProgress(100);

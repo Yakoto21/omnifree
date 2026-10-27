@@ -1,6 +1,6 @@
 ================================================================================
   LODINO NATIVE SUITE — CONVERSOR LOCAL E SOBERANO
-  Versão: 1.0.0-rc.2 (Release Candidate 2) — Edição Portátil para Windows x64
+  Versão: 1.0.0-rc.3 (Release Candidate 3) — Edição Portátil para Windows x64
 ================================================================================
 
 O Lodino é um conjunto de ferramentas nativas para Windows que oferece conversão,
@@ -11,9 +11,9 @@ sem Electron e sem codecs externos.
 --------------------------------------------------------------------------------
 REQUISITOS DE SISTEMA E ARTEFATOS
 --------------------------------------------------------------------------------
-- Pacote Oficial: Lodino-v1.0.0-rc.2-Portable-win-x64.zip
-- Integridade: Lodino-v1.0.0-rc.2-Portable-win-x64.zip.sha256
-- Manifesto: Lodino-v1.0.0-rc.2-Portable-win-x64-manifest.txt
+- Pacote Oficial: Lodino-v1.0.0-rc.3-Portable-win-x64.zip
+- Integridade: Lodino-v1.0.0-rc.3-Portable-win-x64.zip.sha256
+- Manifesto: Lodino-v1.0.0-rc.3-Portable-win-x64-manifest.txt
 - Sistema Operacional: Windows 7 SP1, Windows 8.1, Windows 10 ou Windows 11 (64 bits).
 - Runtime: .NET Framework 4.0 ou superior (já vem pré-instalado de fábrica no
   Windows 8, 10 e 11).
@@ -70,7 +70,7 @@ FORMATOS SUPORTADOS NESTA VERSÃO
 --------------------------------------------------------------------------------
 1. Dados Estruturados: CSV (RFC 4180), JSON (RFC 8259), INI.
 2. Imagens: BMP (24/32 bpp), PNG (Truecolor RGB/RGBA), JPEG (Baseline Sequential).
-3. Áudio: WAV (RIFF/WAVE PCM e IEEE Float 8, 16, 24 e 32 bits, mono/estéreo).
+3. Áudio: WAV (RIFF/WAVE PCM inteiro de 8, 16, 24 e 32 bits, mono/estéreo).
 4. Arquivamento: ZIP (PKZIP Store e Deflate próprio), GZIP (RFC 1952).
 
 Consulte o arquivo "KNOWN_LIMITATIONS.txt" para detalhes técnicos de cada formato.
@@ -81,6 +81,6 @@ SUPORTE E NOTAS DE SEGURANÇA
 - O Lodino não se comunica com a internet nem envia telemetria. Todo o processamento
   ocorre estritamente no seu computador.
 - Caso o Windows Defender SmartScreen apresente a tela azul "O Windows protegeu o
-  seu computador", isto ocorre porque os binários do Release Candidate 2 (RC2) ainda não
+  seu computador", isto ocorre porque os binários do Release Candidate 3 (RC3) ainda não
   possuem certificado de assinatura comercial de código pago. Clique em "Mais
   informações" e em seguida em "Executar assim mesmo".

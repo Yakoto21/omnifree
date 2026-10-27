@@ -273,6 +273,12 @@ namespace Lodino.Tests
             RunTest("HARDENING WAV: Suporte a perfil estúdio 96kHz 24-bit 2 min (~66 MB) (D-WAV-07)", Test_Wav_StudioProfile_96kHz_24Bit_Over64MB_Accepted);
             RunTest("HARDENING WAV: Rejeição de chunk 'data' > 500 MB antes da alocação (D-WAV-07)", Test_Wav_Security_ChunkData_ExceedsMaxAudioFileSize_Rejection);
             RunTest("HARDENING WAV: Rejeição de chunk 'data' com tamanho desalinhado de BlockAlign (D-WAV-07)", Test_Wav_Security_ChunkData_MisalignedBlockAlign_Rejection);
+            RunTest("HARDENING WAV: RiffSize delimita chunks, rejeita truncamento e permite trailing bytes", Test_Wav_Hardening_RiffSize_Bounds_And_TrailingBytes);
+            RunTest("HARDENING WAV: Limite estrito de quantidade de chunks RIFF, inclusive vazios", Test_Wav_Hardening_AuxiliaryChunkCount_Limit);
+            RunTest("WAV (Engine): Rejeição de ganhos NaN e infinitos sem criar arquivo de saída", Test_Wav_Gain_NonFinite_Settings_Rejected_Without_Output);
+            RunTest("WAV (Core): AudioBuffer rejeita ganhos não finitos sem alterar amostras Q31", Test_Wav_Gain_NonFinite_CoreApi_Rejected);
+            RunTest("HARDENING WAV: Truncamento de fmt e GUID EXTENSIBLE gera CorruptDataException", Test_Wav_Hardening_TruncatedFmt_And_ExtensibleGuid);
+            RunTest("HARDENING WAV: cbSize coerente com fmt e PCM32 EXTENSIBLE bit-perfect", Test_Wav_Hardening_ExtensibleCbSize_ExceedsAvailable_Rejection);
 
             Console.WriteLine("\n=================================================");
             Console.WriteLine("  LODINO NATIVE CORE — MOTOR PILOTO 4            ");
@@ -4938,8 +4944,7 @@ namespace Lodino.Tests
                 {
                     manager.BatchFinished += (t, s, f) => doneEvt.Set();
                     manager.StartBatch("json", tempDir);
-                    manager.Cancel(); // Cancela cooperativamente imediatamente
-                    bool ok = doneEvt.WaitOne(10000);
+                    bool ok = manager.CancelAndWait(10000);
                     Assert(ok, "Lote cancelado deve finalizar e sinalizar conclusão");
                     Assert(manager.CancelRequested, "CancelRequested deve ser true");
 
@@ -6156,6 +6161,300 @@ namespace Lodino.Tests
                 }
                 Assert(threwAlign, "Deve rejeitar chunk 'data' desalinhado com CorruptDataException (D-WAV-07)");
             }
+        }
+
+        private static byte[] CreateCanonicalPcm32Bytes(int[] samples)
+        {
+            byte[] bytes;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms, Encoding.ASCII, true))
+                {
+                    writer.Write(WavHeader.FourCcRiff);
+                    writer.Write((uint)0);
+                    writer.Write(WavHeader.FourCcWave);
+                    writer.Write(WavHeader.FourCcFmt);
+                    writer.Write((uint)16);
+                    writer.Write(WavHeader.WaveFormatPcm);
+                    writer.Write((ushort)1);
+                    writer.Write((uint)48000);
+                    writer.Write((uint)192000);
+                    writer.Write((ushort)4);
+                    writer.Write((ushort)32);
+                    writer.Write(WavHeader.FourCcData);
+                    writer.Write((uint)(samples.Length * 4));
+                    for (int i = 0; i < samples.Length; i++) writer.Write(samples[i]);
+                }
+                bytes = ms.ToArray();
+            }
+            SetRiffSize(bytes, (uint)(bytes.Length - 8));
+            return bytes;
+        }
+
+        private static byte[] CreateExtensiblePcm32Bytes(int[] samples, ushort cbSize, int guidByteCount, bool includeData, uint? riffSizeOverride)
+        {
+            byte[] bytes;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms, Encoding.ASCII, true))
+                {
+                    writer.Write(WavHeader.FourCcRiff);
+                    writer.Write((uint)0);
+                    writer.Write(WavHeader.FourCcWave);
+                    writer.Write(WavHeader.FourCcFmt);
+                    writer.Write((uint)40);
+                    writer.Write(WavHeader.WaveFormatExtensible);
+                    writer.Write((ushort)1);
+                    writer.Write((uint)48000);
+                    writer.Write((uint)192000);
+                    writer.Write((ushort)4);
+                    writer.Write((ushort)32);
+                    writer.Write(cbSize);
+                    writer.Write((ushort)32);
+                    writer.Write((uint)0);
+                    writer.Write(WavHeader.PcmSubFormatGuid, 0, guidByteCount);
+                    if (includeData)
+                    {
+                        writer.Write(WavHeader.FourCcData);
+                        writer.Write((uint)(samples.Length * 4));
+                        for (int i = 0; i < samples.Length; i++) writer.Write(samples[i]);
+                    }
+                }
+                bytes = ms.ToArray();
+            }
+            SetRiffSize(bytes, riffSizeOverride.HasValue ? riffSizeOverride.Value : (uint)(bytes.Length - 8));
+            return bytes;
+        }
+
+        private static byte[] CreateChunkCountFixture(int auxiliaryChunkCount)
+        {
+            byte[] bytes;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms, Encoding.ASCII, true))
+                {
+                    writer.Write(WavHeader.FourCcRiff);
+                    writer.Write((uint)0);
+                    writer.Write(WavHeader.FourCcWave);
+                    writer.Write(WavHeader.FourCcFmt);
+                    writer.Write((uint)16);
+                    writer.Write(WavHeader.WaveFormatPcm);
+                    writer.Write((ushort)1);
+                    writer.Write((uint)48000);
+                    writer.Write((uint)192000);
+                    writer.Write((ushort)4);
+                    writer.Write((ushort)32);
+                    for (int i = 0; i < auxiliaryChunkCount; i++)
+                    {
+                        writer.Write(Encoding.ASCII.GetBytes("JUNK"));
+                        writer.Write((uint)0);
+                    }
+                    writer.Write(WavHeader.FourCcData);
+                    writer.Write((uint)0);
+                }
+                bytes = ms.ToArray();
+            }
+            SetRiffSize(bytes, (uint)(bytes.Length - 8));
+            return bytes;
+        }
+
+        private static void SetRiffSize(byte[] bytes, uint size)
+        {
+            Buffer.BlockCopy(BitConverter.GetBytes(size), 0, bytes, 4, 4);
+        }
+
+        private static void AssertWavHeaderCorrupt(byte[] bytes, bool nonSeekable, string message)
+        {
+            bool threwCorrupt = false;
+            using (var ms = new MemoryStream(bytes))
+            {
+                Stream input = ms;
+                if (nonSeekable) input = new NonSeekableStream(ms);
+                try
+                {
+                    WavHeader.Read(input);
+                }
+                catch (CorruptDataException)
+                {
+                    threwCorrupt = true;
+                }
+            }
+            Assert(threwCorrupt, message);
+        }
+
+        private static void AssertPcm32Samples(byte[] bytes, int[] expected, bool nonSeekable, string message)
+        {
+            using (var ms = new MemoryStream(bytes))
+            {
+                Stream input = ms;
+                if (nonSeekable) input = new NonSeekableStream(ms);
+                var decoded = WavDecoder.Decode(input);
+                Assert(decoded.Channels == 1, message + ": canal mono");
+                Assert(decoded.SampleRate == 48000, message + ": taxa de 48 kHz");
+                Assert(decoded.BitsPerSample == 32, message + ": 32 bits");
+                Assert(decoded.FrameCount == expected.Length, message + ": quantidade de quadros");
+                for (int i = 0; i < expected.Length; i++)
+                {
+                    Assert(decoded.GetSampleQ31(0, i) == expected[i], string.Format("{0}: amostra {1} bit-perfect", message, i));
+                }
+            }
+        }
+
+        private static void Test_Wav_Hardening_RiffSize_Bounds_And_TrailingBytes()
+        {
+            int[] samples = new int[] { int.MinValue, 0, int.MaxValue };
+            byte[] canonical = CreateCanonicalPcm32Bytes(samples);
+
+            byte[] insufficient = (byte[])canonical.Clone();
+            SetRiffSize(insufficient, 4);
+            AssertWavHeaderCorrupt(insufficient, false, "RiffSize insuficiente deve ser rejeitado em stream navegável");
+            AssertWavHeaderCorrupt(insufficient, true, "RiffSize insuficiente deve ser rejeitado em stream não navegável");
+
+            byte[] oversized = (byte[])canonical.Clone();
+            SetRiffSize(oversized, 1000);
+            AssertWavHeaderCorrupt(oversized, false, "RIFF maior que o conteúdo físico deve ser rejeitado");
+
+            byte[] oneSample = CreateCanonicalPcm32Bytes(new int[] { 0x12345678 });
+            SetRiffSize(oneSample, 38);
+            AssertWavHeaderCorrupt(oneSample, false, "Payload de data não pode cruzar RiffEnd");
+            AssertWavHeaderCorrupt(oneSample, true, "Payload de data não pode cruzar RiffEnd sem Seek");
+
+            byte[] withTrailingBytes;
+            using (var ms = new MemoryStream())
+            {
+                ms.Write(canonical, 0, canonical.Length);
+                ms.Write(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF, 0x01 }, 0, 5);
+                withTrailingBytes = ms.ToArray();
+            }
+            AssertPcm32Samples(withTrailingBytes, samples, false, "Trailing bytes após RiffEnd devem ser ignorados");
+            AssertPcm32Samples(withTrailingBytes, samples, true, "Trailing bytes após RiffEnd devem ser ignorados sem Seek");
+        }
+
+        private static void Test_Wav_Hardening_AuxiliaryChunkCount_Limit()
+        {
+            byte[] atLimit = CreateChunkCountFixture(SecurityLimits.MaxAudioChunkCount - 2);
+            using (var ms = new MemoryStream(atLimit))
+            {
+                var header = WavHeader.Read(ms);
+                Assert(header.FrameCount == 0, "Fixture no limite exato de chunks deve permanecer válido");
+                Assert(header.AuxiliaryChunks.Count == 1, "Chunks JUNK repetidos devem compartilhar a entrada de metadados");
+            }
+
+            byte[] aboveLimit = CreateChunkCountFixture(SecurityLimits.MaxAudioChunkCount - 1);
+            bool threwLimit = false;
+            using (var ms = new MemoryStream(aboveLimit))
+            {
+                try
+                {
+                    WavHeader.Read(ms);
+                }
+                catch (ResourceLimitException)
+                {
+                    threwLimit = true;
+                }
+            }
+            Assert(threwLimit, "Um chunk além do limite deve gerar ResourceLimitException");
+        }
+
+        private static void Test_Wav_Gain_NonFinite_Settings_Rejected_Without_Output()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "lodino_wav_gain_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string inputPath = Path.Combine(tempDir, "source.wav");
+                File.WriteAllBytes(inputPath, CreateCanonicalPcm32Bytes(new int[] { 0, 1073741824, -1073741824 }));
+                string[] gains = new string[] { "NaN", "Infinity", "-Infinity" };
+                var engine = new WavEngine();
+
+                for (int i = 0; i < gains.Length; i++)
+                {
+                    var request = new ConvertRequest
+                    {
+                        InputPath = inputPath,
+                        TargetFormat = "wav",
+                        OutputDirectory = tempDir,
+                        OutputFileName = "invalid_" + i + ".wav"
+                    };
+                    request.Settings["gain"] = gains[i];
+                    int filesBefore = Directory.GetFiles(tempDir).Length;
+                    bool threwInvalidGain = false;
+                    try
+                    {
+                        engine.Convert(request, null);
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        threwInvalidGain = true;
+                    }
+                    Assert(threwInvalidGain, "Ganho " + gains[i] + " deve ser rejeitado");
+                    Assert(Directory.GetFiles(tempDir).Length == filesBefore, "Ganho " + gains[i] + " não pode criar arquivo de saída");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private static void Test_Wav_Gain_NonFinite_CoreApi_Rejected()
+        {
+            double[] gains = new double[] { double.NaN, double.PositiveInfinity, double.NegativeInfinity };
+            const int originalSample = 0x12345678;
+            for (int i = 0; i < gains.Length; i++)
+            {
+                var buffer = new AudioBuffer(1, 48000, 32, 1);
+                buffer.SetSampleQ31(0, 0, originalSample);
+                bool threwInvalidGain = false;
+                try
+                {
+                    buffer.ApplyGain(gains[i]);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    threwInvalidGain = true;
+                }
+                Assert(threwInvalidGain, "AudioBuffer.ApplyGain deve rejeitar valor não finito");
+                Assert(buffer.GetSampleQ31(0, 0) == originalSample, "Ganho inválido não pode alterar a amostra Q31");
+            }
+        }
+
+        private static void Test_Wav_Hardening_TruncatedFmt_And_ExtensibleGuid()
+        {
+            byte[] truncatedFmt;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms, Encoding.ASCII, true))
+                {
+                    writer.Write(WavHeader.FourCcRiff);
+                    writer.Write((uint)36);
+                    writer.Write(WavHeader.FourCcWave);
+                    writer.Write(WavHeader.FourCcFmt);
+                    writer.Write((uint)16);
+                    writer.Write(WavHeader.WaveFormatPcm);
+                    writer.Write((ushort)1);
+                    writer.Write((uint)48000);
+                }
+                truncatedFmt = ms.ToArray();
+            }
+            AssertWavHeaderCorrupt(truncatedFmt, false, "fmt truncado deve gerar CorruptDataException");
+            AssertWavHeaderCorrupt(truncatedFmt, true, "fmt truncado sem Seek deve gerar CorruptDataException");
+
+            byte[] truncatedGuid = CreateExtensiblePcm32Bytes(new int[0], 22, 4, false, 64);
+            AssertWavHeaderCorrupt(truncatedGuid, false, "GUID EXTENSIBLE truncado deve gerar CorruptDataException");
+            AssertWavHeaderCorrupt(truncatedGuid, true, "GUID EXTENSIBLE truncado sem Seek deve gerar CorruptDataException");
+        }
+
+        private static void Test_Wav_Hardening_ExtensibleCbSize_ExceedsAvailable_Rejection()
+        {
+            int[] samples = new int[] { int.MinValue, -1, 0, 1, int.MaxValue, 0x12345678 };
+            byte[] invalidCbSize = CreateExtensiblePcm32Bytes(samples, ushort.MaxValue, 16, true, null);
+            AssertWavHeaderCorrupt(invalidCbSize, false, "cbSize maior que a extensão disponível deve ser rejeitado");
+            AssertWavHeaderCorrupt(invalidCbSize, true, "cbSize maior que a extensão disponível deve ser rejeitado sem Seek");
+
+            byte[] valid = CreateExtensiblePcm32Bytes(samples, 22, 16, true, null);
+            AssertPcm32Samples(valid, samples, false, "EXTENSIBLE PCM32 válido");
+            AssertPcm32Samples(valid, samples, true, "EXTENSIBLE PCM32 válido sem Seek");
         }
 
         #region Casos de Teste ZIP
@@ -8325,7 +8624,7 @@ namespace Lodino.Tests
             }
             finally
             {
-                mgr.Cancel();
+                mgr.CancelAndWait(10000);
                 if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
             }
         }
@@ -8361,7 +8660,7 @@ namespace Lodino.Tests
             }
             finally
             {
-                mgr.Cancel();
+                mgr.CancelAndWait(10000);
                 if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
             }
         }
@@ -8395,7 +8694,7 @@ namespace Lodino.Tests
             }
             finally
             {
-                mgr.Cancel();
+                mgr.CancelAndWait(10000);
                 if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
             }
         }

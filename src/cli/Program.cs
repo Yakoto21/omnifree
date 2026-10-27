@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Lodino.Core.Api;
+using Lodino.Core.Errors;
 using Lodino.Core.Formats.Archive.Gzip;
 using Lodino.Core.Registry;
 
@@ -28,9 +29,24 @@ namespace Lodino.Cli
                     string target = args[2];
                     string outputDir = args.Length >= 4 ? args[3] : Environment.CurrentDirectory;
 
+                    if (!File.Exists(input))
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("Arquivo de entrada não encontrado: " + input);
+                        Console.ResetColor();
+                        return 1;
+                    }
+
                     var registry = EngineRegistry.Default;
                     string srcExt = Path.GetExtension(input).TrimStart('.').ToLowerInvariant();
                     var engine = registry.Resolve(srcExt, target);
+                    if (engine == null)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine(string.Format("Nenhum motor próprio suporta a rota de conversão: .{0} -> .{1}", srcExt, target));
+                        Console.ResetColor();
+                        return 1;
+                    }
 
                     Console.WriteLine(string.Format("Iniciando conversão: '{0}' -> .{1}", input, target));
                     Console.WriteLine(string.Format("Motor responsável: {0} ({1})", engine.EngineLabel, engine.EngineId));
@@ -91,6 +107,13 @@ namespace Lodino.Cli
                         string ext = Path.GetExtension(file).TrimStart('.').ToLowerInvariant();
                         var registry = EngineRegistry.Default;
                         var engine = registry.Resolve(ext, ext);
+                        if (engine == null)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine(string.Format("Nenhum motor próprio registrado para inspecionar o formato: .{0}", ext));
+                            Console.ResetColor();
+                            return 1;
+                        }
                         var info = engine.Inspect(fs, file);
 
                         Console.WriteLine("========================================");
@@ -416,6 +439,34 @@ namespace Lodino.Cli
                     PrintHelp();
                     return 1;
                 }
+            }
+            catch (UnsupportedFormatException ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Formato não suportado: " + ex.Message);
+                Console.ResetColor();
+                return 1;
+            }
+            catch (FileNotFoundException ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Arquivo não encontrado: " + (ex.FileName ?? ex.Message));
+                Console.ResetColor();
+                return 1;
+            }
+            catch (PathTooLongException)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Caminho muito longo: O caminho do arquivo excede o limite de 260 caracteres suportado pelo sistema operacional.");
+                Console.ResetColor();
+                return 1;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Acesso negado: Sem permissão para acessar o arquivo ou diretório especificado.");
+                Console.ResetColor();
+                return 1;
             }
             catch (Exception ex)
             {

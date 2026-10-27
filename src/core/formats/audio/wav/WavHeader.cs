@@ -60,13 +60,17 @@ namespace Lodino.Core.Formats.Audio.Wav
             var reader = new BinaryReader(stream, Encoding.ASCII, true);
 
             // 1. Assinatura RIFF e WAVE
-            uint riff = reader.ReadUInt32();
+            uint riff = ReadUInt32(reader, "assinatura RIFF");
             if (riff != FourCcRiff)
             {
                 throw new CorruptDataException("Assinatura mágica inválida: esperava 'RIFF'.");
             }
 
-            header.RiffSize = reader.ReadUInt32();
+            header.RiffSize = ReadUInt32(reader, "tamanho do contêiner RIFF");
+            if (header.RiffSize < 4)
+            {
+                throw new CorruptDataException("Tamanho RIFF inválido: o contêiner não comporta a assinatura 'WAVE'.");
+            }
             if (header.RiffSize > SecurityLimits.DefaultMaxAudioFileSize)
             {
                 throw new ResourceLimitException(string.Format(
@@ -74,7 +78,8 @@ namespace Lodino.Core.Formats.Audio.Wav
                     header.RiffSize, SecurityLimits.DefaultMaxAudioFileSize));
             }
 
-            uint wave = reader.ReadUInt32();
+            long riffEnd = 8L + header.RiffSize;
+            uint wave = ReadUInt32(reader, "assinatura WAVE");
             if (wave != FourCcWave)
             {
                 throw new CorruptDataException("Formato RIFF inválido: esperava FourCC 'WAVE'.");
@@ -82,29 +87,34 @@ namespace Lodino.Core.Formats.Audio.Wav
 
             bool foundFmt = false;
             bool foundData = false;
+            bool dataPadOutsideRiff = false;
             long totalAuxiliaryBytes = 0;
+            int chunksProcessed = 0;
 
-            // 2. Iteração de Chunks
+            // 2. Iteração de Chunks limitada ao contêiner RIFF declarado
             long streamPos = 12;
             while (!foundData)
             {
+                if (riffEnd - streamPos < 8)
+                {
+                    break;
+                }
+
                 // Se o stream tiver tamanho conhecido e não houver mais 8 bytes para ler o próximo chunk
                 if (streamLength >= 0 && streamPos + 8 > streamLength)
                 {
                     break;
                 }
 
-                uint chunkId;
-                uint chunkSize;
-                try
+                uint chunkId = ReadUInt32(reader, "identificador de chunk");
+                uint chunkSize = ReadUInt32(reader, "tamanho de chunk");
+                streamPos += 8;
+                chunksProcessed++;
+                if (chunksProcessed > SecurityLimits.MaxAudioChunkCount)
                 {
-                    chunkId = reader.ReadUInt32();
-                    chunkSize = reader.ReadUInt32();
-                    streamPos += 8;
-                }
-                catch (EndOfStreamException)
-                {
-                    break;
+                    throw new ResourceLimitException(string.Format(
+                        "Quantidade de chunks RIFF excede o limite máximo permitido de {0:N0}.",
+                        SecurityLimits.MaxAudioChunkCount));
                 }
 
                 string chunkIdStr = Encoding.ASCII.GetString(BitConverter.GetBytes(chunkId));
@@ -114,6 +124,25 @@ namespace Lodino.Core.Formats.Audio.Wav
                     throw new ResourceLimitException(string.Format(
                         "Tamanho do chunk auxiliar '{0}' ({1:N0} bytes) excede o limite máximo permitido de {2:N0} bytes.",
                         chunkIdStr, chunkSize, SecurityLimits.MaxSingleChunkSize));
+                }
+
+                long chunkBytesRemaining = riffEnd - streamPos;
+                if ((long)chunkSize > chunkBytesRemaining)
+                {
+                    throw new CorruptDataException(string.Format(
+                        "Chunk '{0}' ultrapassa o limite do contêiner RIFF declarado.", chunkIdStr));
+                }
+                if ((chunkSize & 1u) != 0 && chunkBytesRemaining - (long)chunkSize < 1)
+                {
+                    if (chunkId == FourCcData)
+                    {
+                        dataPadOutsideRiff = true;
+                    }
+                    else
+                    {
+                        throw new CorruptDataException(string.Format(
+                            "Chunk '{0}' ultrapassa o limite do contêiner RIFF declarado.", chunkIdStr));
+                    }
                 }
 
                 if (chunkId == FourCcFmt)
@@ -129,12 +158,12 @@ namespace Lodino.Core.Formats.Audio.Wav
                             "Chunk 'fmt ' corrompido: tamanho de {0} bytes é menor que o mínimo padrão de 16 bytes.", chunkSize));
                     }
 
-                    header.AudioFormat = reader.ReadUInt16();
-                    header.Channels = reader.ReadUInt16();
-                    header.SampleRate = reader.ReadUInt32();
-                    header.ByteRate = reader.ReadUInt32();
-                    header.BlockAlign = reader.ReadUInt16();
-                    header.BitsPerSample = reader.ReadUInt16();
+                    header.AudioFormat = ReadUInt16(reader, "wFormatTag do chunk 'fmt '");
+                    header.Channels = ReadUInt16(reader, "contagem de canais do chunk 'fmt '");
+                    header.SampleRate = ReadUInt32(reader, "taxa de amostragem do chunk 'fmt '");
+                    header.ByteRate = ReadUInt32(reader, "byte rate do chunk 'fmt '");
+                    header.BlockAlign = ReadUInt16(reader, "alinhamento de bloco do chunk 'fmt '");
+                    header.BitsPerSample = ReadUInt16(reader, "profundidade de bits do chunk 'fmt '");
                     streamPos += 16;
 
                     long bytesLeftInChunk = chunkSize - 16;
@@ -147,14 +176,20 @@ namespace Lodino.Core.Formats.Audio.Wav
                             throw new CorruptDataException("Cabeçalho WAVE_FORMAT_EXTENSIBLE truncado.");
                         }
 
-                        ushort cbSize = reader.ReadUInt16();
+                        ushort cbSize = ReadUInt16(reader, "cbSize do cabeçalho WAVE_FORMAT_EXTENSIBLE");
                         if (cbSize < 22)
                         {
                             throw new CorruptDataException(string.Format(
                                 "Cabeçalho WAVE_FORMAT_EXTENSIBLE inválido: cbSize={0} (mínimo 22 bytes esperado).", cbSize));
                         }
+                        if ((long)cbSize > bytesLeftInChunk - 2)
+                        {
+                            throw new CorruptDataException(string.Format(
+                                "Cabeçalho WAVE_FORMAT_EXTENSIBLE inválido: cbSize={0}, mas o chunk 'fmt ' comporta apenas {1} bytes de extensão.",
+                                cbSize, bytesLeftInChunk - 2));
+                        }
 
-                        ushort validBits = reader.ReadUInt16();
+                        ushort validBits = ReadUInt16(reader, "validBits do cabeçalho WAVE_FORMAT_EXTENSIBLE");
                         if (validBits != 0 && validBits > header.BitsPerSample)
                         {
                             throw new CorruptDataException(string.Format(
@@ -162,8 +197,8 @@ namespace Lodino.Core.Formats.Audio.Wav
                                 validBits, header.BitsPerSample));
                         }
 
-                        uint channelMask = reader.ReadUInt32();
-                        byte[] subFormat = reader.ReadBytes(16);
+                        uint channelMask = ReadUInt32(reader, "máscara de canais do cabeçalho WAVE_FORMAT_EXTENSIBLE");
+                        byte[] subFormat = ReadBytesExact(reader, 16, "GUID do cabeçalho WAVE_FORMAT_EXTENSIBLE");
                         streamPos += 24;
                         bytesLeftInChunk -= 24;
 
@@ -193,7 +228,7 @@ namespace Lodino.Core.Formats.Audio.Wav
                     // Pad byte se chunkSize for ímpar
                     if (chunkSize % 2 != 0)
                     {
-                        reader.ReadByte();
+                        ReadByte(reader, "byte de preenchimento do chunk 'fmt '");
                         streamPos += 1;
                     }
 
@@ -239,12 +274,8 @@ namespace Lodino.Core.Formats.Audio.Wav
                     // Pad byte se chunkSize for ímpar (regra RIFF word-alignment)
                     if (chunkSize % 2 != 0)
                     {
-                        try
-                        {
-                            reader.ReadByte();
-                            streamPos += 1;
-                        }
-                        catch (EndOfStreamException) { }
+                        ReadByte(reader, "byte de preenchimento de chunk auxiliar");
+                        streamPos += 1;
                     }
                 }
             }
@@ -259,7 +290,65 @@ namespace Lodino.Core.Formats.Audio.Wav
             }
 
             header.Validate(streamLength);
+            if (dataPadOutsideRiff)
+            {
+                throw new CorruptDataException("Chunk 'data' ultrapassa o limite do contêiner RIFF declarado.");
+            }
+            if (streamLength >= 0 && riffEnd > streamLength)
+            {
+                throw new CorruptDataException(string.Format(
+                    "Arquivo truncado: o contêiner RIFF declara terminar no offset {0}, mas o stream possui apenas {1} bytes.",
+                    riffEnd, streamLength));
+            }
             return header;
+        }
+
+        private static uint ReadUInt32(BinaryReader reader, string fieldName)
+        {
+            try
+            {
+                return reader.ReadUInt32();
+            }
+            catch (EndOfStreamException ex)
+            {
+                throw new CorruptDataException("Arquivo truncado durante a leitura de " + fieldName + ".", ex);
+            }
+        }
+
+        private static ushort ReadUInt16(BinaryReader reader, string fieldName)
+        {
+            try
+            {
+                return reader.ReadUInt16();
+            }
+            catch (EndOfStreamException ex)
+            {
+                throw new CorruptDataException("Arquivo truncado durante a leitura de " + fieldName + ".", ex);
+            }
+        }
+
+        private static byte ReadByte(BinaryReader reader, string fieldName)
+        {
+            try
+            {
+                return reader.ReadByte();
+            }
+            catch (EndOfStreamException ex)
+            {
+                throw new CorruptDataException("Arquivo truncado durante a leitura de " + fieldName + ".", ex);
+            }
+        }
+
+        private static byte[] ReadBytesExact(BinaryReader reader, int count, string fieldName)
+        {
+            byte[] bytes = reader.ReadBytes(count);
+            if (bytes.Length != count)
+            {
+                throw new CorruptDataException(string.Format(
+                    "Arquivo truncado durante a leitura de {0}: esperava {1} bytes, obtidos {2}.",
+                    fieldName, count, bytes.Length));
+            }
+            return bytes;
         }
 
         private static void SkipBytes(BinaryReader reader, long count)

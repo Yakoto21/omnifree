@@ -14,4 +14,4 @@ using System.Runtime.InteropServices;
 // Informações de versionamento da compilação
 [assembly: AssemblyVersion("1.0.0.0")]
 [assembly: AssemblyFileVersion("1.0.0.0")]
-[assembly: AssemblyInformationalVersion("1.0.0-rc.2")]
+[assembly: AssemblyInformationalVersion("1.0.0-rc.3")]

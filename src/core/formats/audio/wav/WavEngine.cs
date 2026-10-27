@@ -154,9 +154,16 @@ namespace Lodino.Core.Formats.Audio.Wav
                     request.Settings.TryGetValue("volume", out gainStr))
                 {
                     float gain;
-                    if (float.TryParse(gainStr, NumberStyles.Float, CultureInfo.InvariantCulture, out gain) && gain > 0f)
+                    if (float.TryParse(gainStr, NumberStyles.Float, CultureInfo.InvariantCulture, out gain))
                     {
-                        buffer.ApplyGain(gain);
+                        if (float.IsNaN(gain) || float.IsInfinity(gain))
+                        {
+                            throw new ArgumentOutOfRangeException("gain", "O ganho deve ser um número finito.");
+                        }
+                        if (gain > 0f)
+                        {
+                            buffer.ApplyGain(gain);
+                        }
                     }
                 }
 

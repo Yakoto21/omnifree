@@ -93,6 +93,7 @@ namespace Lodino.Core.Safety
         public const long MaxAudioFrames = 100 * 1000 * 1000; // 100 milhões de frames (~35 min a 48 kHz stereo)
         public const long MaxSingleChunkSize = 64 * 1024 * 1024; // 64 MB por chunk auxiliar RIFF (não aplicável ao chunk 'data')
         public const long MaxAuxiliaryHeaderBytes = 16 * 1024 * 1024; // 16 MB acumulados de chunks auxiliares antes do data
+        public const int MaxAudioChunkCount = 4096; // Inclui fmt, data e chunks auxiliares processados
         public const long MaxAudioMemoryBytes = 400 * 1024 * 1024; // 400 MB de armazenamento em memória descompactada (canais * frames * sizeof(int))
 
         public static void AssertAudioParameters(int channels, int sampleRate, int bitsPerSample, long frameCount)

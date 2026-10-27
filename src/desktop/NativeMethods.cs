@@ -131,6 +131,8 @@ namespace Lodino.Desktop
         public const ushort CBN_SELCHANGE     = 1;
         public const ushort LBN_SELCHANGE     = 1;
 
+        public const ushort LBN_DBLCLK        = 2;
+
         // DWM Immersive Dark Mode
         public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
 

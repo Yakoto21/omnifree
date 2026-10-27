@@ -30,6 +30,8 @@ O contêiner RIFF (*Resource Interchange File Format*) utiliza ordenação de by
 | `0x04` | 4 bytes | `RiffSize` | uint32 (LE) | Tamanho total do arquivo menos 8 bytes (`4 + ChunksSize`) |
 | `0x08` | 4 bytes | `Format` | ASCII | `"WAVE"` (`0x45564157`) |
 
+**Delimitação do contêiner:** o parser utiliza `RiffEnd = 8 + RiffSize` como fronteira exclusiva. Todo chunk, incluindo seu byte de preenchimento, deve terminar dentro dessa fronteira. Em streams navegáveis, um `RiffEnd` superior ao tamanho físico disponível é rejeitado como truncamento. Bytes adicionais depois de `RiffEnd` são permitidos e ignorados, pois não pertencem ao contêiner declarado; essa política aceita tags ou dados externos ao RIFF sem tratá-los como áudio. Em streams não navegáveis, `Stream.Length` não é exigido: os limites declarados são aplicados durante a leitura e o truncamento físico é detectado quando os bytes correspondentes são consumidos. O conteúdo posterior ao chunk `data` não é varrido pela decodificação.
+
 ### 2.2 Estrutura Geral de Chunks
 Cada chunk RIFF possui o seguinte leiaute:
 ```
@@ -64,8 +66,9 @@ Arquivos WAV gravados por estações de áudio modernas (DAWs) frequentemente ut
 - SubFormat GUID do PCM: `00000001-0000-0010-8000-00AA00389B71`.
 - **Validações Obrigatórias de Hardening:**
   1. O campo `cbSize` deve ser $\ge 22$ bytes (`validBits` [2] + `channelMask` [4] + `subFormat` GUID [16]). Se `cbSize < 22`, o arquivo é sumariamente rejeitado com `CorruptDataException`.
-  2. O campo `wValidBitsPerSample` não pode exceder `wBitsPerSample`. Se `validBits > BitsPerSample`, o cabeçalho é rejeitado como corrompido.
-  3. Se o GUID corresponder ao PCM, o formato é normalizado para PCM canônico.
+  2. O campo `cbSize` não pode exceder os bytes de extensão disponíveis no chunk `fmt ` após o próprio campo `cbSize`; bytes adicionais além da extensão declarada são ignorados para preservar compatibilidade.
+  3. O campo `wValidBitsPerSample` não pode exceder `wBitsPerSample`. Se `validBits > BitsPerSample`, o cabeçalho é rejeitado como corrompido.
+  4. Se o GUID corresponder ao PCM, o formato é normalizado para PCM canônico.
 
 ### 2.4 Chunk Obrigatório de Amostras (`"data"`) e Hardening D-WAV-07
 Identificador: `"data"` (`0x61746164`).
@@ -81,6 +84,7 @@ Identificador: `"data"` (`0x61746164`).
 Chunks como `"LIST"`, `"JUNK"`, `"bext"`, `"id3 "` ou metadados informativos são saltados de maneira segura e indexados no dicionário de metadados da inspeção (`FormatInspection.Metadata`).
 - **Teto Individual:** Nenhum chunk auxiliar individual pode exceder `SecurityLimits.MaxSingleChunkSize` (64 MB).
 - **Teto Acumulado:** O total acumulado de bytes de chunks auxiliares antes do `"data"` não pode exceder `SecurityLimits.MaxAuxiliaryHeaderBytes` (16 MB).
+- **Teto de Quantidade:** No máximo `SecurityLimits.MaxAudioChunkCount` (4.096) chunks são processados, incluindo `fmt `, `data` e auxiliares. O limite também cobre chunks vazios e restringe o custo de cabeçalhos, strings e entradas de metadados.
 - **Resiliência a Fluxos Não-Navegáveis (`CanSeek = false`):** Na rotina `SkipBytes`, caso o stream encerre prematuramente (`read <= 0` com `remaining > 0`), o decodificador lança imediatamente `CorruptDataException`, eliminando qualquer risco de loop infinito ou travamento de I/O.
 
 ---
@@ -152,7 +156,7 @@ $$\text{interpolated} = (1.0 - \alpha) \times s_{\text{in}}[i] + \alpha \times s
 O resultado em precisão `double` é submetido a clamping no intervalo $[-2^{31}, 2^{31}-1]$ e convertido para Q31 com `Math.Round`.
 
 ### 4.4 Ajuste Linear de Ganho e Normalização de Pico
-- **Ganho Linear:** Multiplicação uniforme de cada amostra Q31 em precisão `double` com clamping estrito no intervalo de saturação Q31.
+- **Ganho Linear:** Multiplicação uniforme de cada amostra Q31 em precisão `double` com clamping estrito no intervalo de saturação Q31. O ganho deve ser finito; `NaN`, `Infinity` e `-Infinity` são rejeitados antes da modificação das amostras ou da criação da saída.
 - **Normalização de Pico:** Localização do valor absoluto máximo em todos os canais:
   $$P = \max_{c, i} |s_c[i]|$$
   Se $P > 0$, as amostras são escalonadas para o pico alvo $P_{\text{target}}$ (padrão 0.99 / -0.1 dBFS).
@@ -169,6 +173,7 @@ O subsistema de áudio estabelece tetos rígidos para evitar exaustão de memór
 - `MaxAudioFrames`: 100.000.000 quadros (~35 minutos de áudio estéreo a 48 kHz).
 - `MaxSingleChunkSize`: 64 MB por chunk RIFF.
 - `MaxAuxiliaryHeaderBytes`: 16 MB acumulados de chunks auxiliares antes do `"data"`.
+- `MaxAudioChunkCount`: 4.096 chunks processados, incluindo chunks vazios, `fmt ` e `data`.
 - `MaxAudioMemoryBytes`: 400 MB de consumo de memória estimada ($\text{canais} \times \text{quadros} \times 4$).
 - `AssertAudioParameters`: Método centralizado que valida canais, taxas, bits, contagem de quadros e consumo de memória antes de qualquer alocação.
 
