@@ -128,19 +128,21 @@ jobs:
           $mandatoryArtifacts = @($expectedZip, $expectedSha, $expectedManifest, $expectedSetup)
           foreach ($art in $mandatoryArtifacts) {
               if (-not (Test-Path $art)) {
-                  Write-Error "Artefato obrigatório ausente em dist: $art"
+                  Write-Error "Artefato obrigatorio ausente em dist: $art"
                   exit 1
               }
           }
 
-          Write-Host "`n=================================================" -ForegroundColor Cyan
-          Write-Host "  LODINO NATIVE SUITE — ARTEFATOS HOMOLOGADOS   " -ForegroundColor Cyan
+          Write-Host ""
+          Write-Host "=================================================" -ForegroundColor Cyan
+          Write-Host "  LODINO NATIVE SUITE - ARTEFATOS HOMOLOGADOS   " -ForegroundColor Cyan
           Write-Host "=================================================" -ForegroundColor Cyan
           Get-ChildItem -Path dist | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
               $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
               Write-Host ("{0,-48} {1,10} bytes  SHA256: {2}" -f $_.Name, $_.Length, $hash)
           }
-          Write-Host "`nValidação concluída: 100% dos artefatos íntegros." -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Validacao concluida: 100% dos artefatos integros." -ForegroundColor Green
 
       - name: Disponibilizar artefatos como resultado da execução
         uses: actions/upload-artifact@v4
